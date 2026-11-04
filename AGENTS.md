@@ -39,7 +39,7 @@
 1. **1つの作業 = 1ブランチ = 1 PR。** 最新の `{{DEFAULT_BRANCH}}` からブランチを切る。ツールやセッションがブランチを指定しているときはそれに従う → [AI_GIT_WORKFLOW §2](docs/AI_GIT_WORKFLOW.md)
 2. **PR のタイトルは Conventional Commits**（`feat(scope): 内容`）。本文は `.github/pull_request_template.md` の見出しに沿う
 3. **force push しない。** push 済みの履歴を書き換えない。マージ済みの PR の続きは新しいブランチで別の PR にする。`{{DEFAULT_BRANCH}}` の取り込みは rebase ではなく merge
-4. **「確認が必要な項目」に当てはまる PR は、自動マージせずオーナーに確認する**（ADR・DB スキーマ・要件・運用ルール/CI・依存のメジャー更新・認証/権限・リリース）→ [AI_GIT_WORKFLOW §5](docs/AI_GIT_WORKFLOW.md)
+4. **「確認が必要な項目」に当てはまる PR は、自動マージせずオーナーに確認する。** 待つのはその PR だけで、依存しない作業は進める（ADR・DB スキーマ・要件・運用ルール/CI・依存のメジャー更新・認証/権限・リリース）→ [AI_GIT_WORKFLOW §5](docs/AI_GIT_WORKFLOW.md)
 5. **PR を出す前に、手元で `{{CHECK_COMMAND}}` を通す。** CI が落ちたら原因を直す。テストを消す・飛ばす・弱めることで通さない
 6. **秘密情報（API キー・パスワード・個人情報）をコミットしない。** 見つけたら作業を止めて報告する
 7. **やらないこと（スコープ外）に手を広げない。** 必要そうなら Issue にして提案する → [AI_PROJECT_CONTEXT §4](docs/AI_PROJECT_CONTEXT.md)
