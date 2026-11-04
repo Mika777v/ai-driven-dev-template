@@ -104,6 +104,7 @@ events.tsv                                                         frames.raw.ts
 | PHP | `#0 /var/www/html/app/Foo.php(42): Foo->bar()`、`in /x.php on line 42` |
 | Java / Kotlin | `at com.example.Foo.bar(Foo.java:42)` → `com/example/Foo.java` |
 | Node.js | `at load (/srv/app/src/app.js:3:12)`、`at /srv/app/x.js:3:12` |
+| vitest | `❯ load src/app.ts:3:12`、`❯ src/app.test.ts:10:5`（アサーションの差分は区切りの線 `⎯` までを1件にする） |
 | Ruby | `from /app/lib/x.rb:5:in 'run'` |
 | Go | `<TAB>/build/main.go:8 +0x18`（関数名は前の行） |
 | そのほか | `/` を含む `path/to/file.ext:42`（URL の host:port は除く） |

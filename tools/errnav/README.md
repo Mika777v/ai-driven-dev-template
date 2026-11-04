@@ -23,7 +23,7 @@ $ errnav context 9 --copy   # AI に貼るためのコンテキストをクリ�
 | ログファイルの自動検出 | `errnav logs` | よくある置き場所・プラグインの候補・深さ4までの `*.log` を新しい順に（`.gitignore` されたログも探す） |
 | エラーの抽出 | `errnav scan` | タイムスタンプ・レベルでログを区切り、エラーだけを取り出す。同じエラーは件数にまとめる |
 | 発生箇所の特定 | `errnav scan` / `show` | コンテナの中のパス（`/var/www/html/...`）を手元のファイルに結び付け、プロジェクトのコードの最初のフレームを示す |
-| スタックトレースの解析 | `errnav show ID` | PHP・Python・Node.js・Java/Kotlin・Go・Ruby のトレースを「0 = 発生箇所」の順にそろえる。例外の連鎖は根本の原因を先に |
+| スタックトレースの解析 | `errnav show ID` | PHP・Python・Node.js（vitest を含む）・Java/Kotlin・Go・Ruby のトレースを「0 = 発生箇所」の順にそろえる。例外の連鎖は根本の原因を先に |
 | ソースジャンプ | `errnav open ID [FRAME]` | 設定したエディタで、その行を開く（vim・VS Code・PhpStorm・Sublime など）。fzf があればフレームを選べる |
 | 呼び出し経路の可視化 | `errnav tree ID` | 入口から発生箇所までを木の形で。依存ライブラリのフレームが続くところは畳む |
 | AI 解析用コンテキスト | `errnav context ID` | 環境・トレース・ソースの抜粋・最近の変更・ログを Markdown 1つに。秘密情報らしい値は伏せる |
@@ -181,6 +181,10 @@ errnav_myapp_path_map() { printf '%s\n' '/opt/myapp=.'; }
 
 - Linux・WSL・macOS（bash 3.2 以上。macOS の標準の bash と BSD のコマンドで動くように書いています）
 - awk は gawk・mawk・macOS の awk のどれでも
+
+## 効果を測る
+
+AI の不具合の調査が errnav で安く・速くなるかを測るベンチマークは [bench/README.md](bench/README.md)。
 
 ## テスト
 

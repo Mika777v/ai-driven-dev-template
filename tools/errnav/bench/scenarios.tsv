@@ -1,0 +1,6 @@
+# errnav のベンチマークのシナリオ（routepense に仕込んだ不具合）
+# 列: id <TAB> 不具合のコミットの件名の前置き <TAB> 原因のファイル <TAB> 正解とみなす行の範囲（始め） <TAB> （終わり） <TAB> 種類
+# 不具合のコミットは routepense の bench/errnav-bugs ブランチにある（件名が「bench: B1 」などで始まる）
+B1	bench: B1 	backend/src/daily-records/sqlite-daily-record-repository.ts	126	131	例外（落ちる場所と原因が離れている）
+B2	bench: B2 	backend/src/routes/sqlite-route-repository.ts	67	70	ライブラリの奥のエラー（SQLite の CHECK 制約）
+B3	bench: B3 	shared/src/bulk.ts	28	32	例外なし（値だけが違う）
