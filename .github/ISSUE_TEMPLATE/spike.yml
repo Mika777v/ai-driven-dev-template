@@ -1,0 +1,31 @@
+name: Spike
+description: 技術検証（時間を区切る。結果は ADR か Issue のコメントに残し、コードはマージしない）
+title: "[Spike] "
+labels: ["type:spike"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 判断したい問い
+      placeholder: 例) 無料で使える経路検索の API はあるか
+    validations:
+      required: true
+  - type: input
+    id: timebox
+    attributes:
+      label: タイムボックス
+      placeholder: 例) 半日
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: 判断基準
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: 成果物
+      value: |
+        - [ ] docs/adr/NNNN-*.md（または Issue のコメント）

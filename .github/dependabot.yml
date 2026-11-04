@@ -1,0 +1,25 @@
+# 依存の更新の提案。package-ecosystem はプロジェクトに合わせて足す（npm・pip・uv・gradle・docker など）
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # 公開から2週間以上たった版だけを提案させる（docs/AI_CODING_STANDARDS.md §6）
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: ci
+    labels: ["area:infra", "dependencies"]
+
+  # 例:
+  # - package-ecosystem: npm
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
+  #   cooldown:
+  #     default-days: 14
+  #   commit-message:
+  #     prefix: build
+  #     include: scope
+  #   labels: ["dependencies"]

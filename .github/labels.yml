@@ -1,0 +1,62 @@
+# ラベル定義の正本。main に push されると .github/workflows/labels.yml が同期する。
+# ここに無いラベルは同期のときに消える（GitHub の既定のラベルも含む）。
+# area:* はプロジェクトのディレクトリに合わせて書き換える。
+
+# type
+- name: "type:epic"
+  color: "3E4B9E"
+  description: "Epic（複数の Task の親）"
+- name: "type:task"
+  color: "5319E7"
+  description: "1 PR で終わる作業"
+- name: "type:bug"
+  color: "D73A4A"
+  description: "不具合"
+- name: "type:spike"
+  color: "FBCA04"
+  description: "技術検証（タイムボックス付き）"
+- name: "type:docs"
+  color: "0075CA"
+  description: "ドキュメント"
+
+# area（プロジェクトに合わせて書き換える）
+- name: "area:frontend"
+  color: "C2E0C6"
+  description: "画面"
+- name: "area:backend"
+  color: "C2E0C6"
+  description: "サーバー"
+- name: "area:db"
+  color: "C2E0C6"
+  description: "スキーマ・マイグレーション"
+- name: "area:infra"
+  color: "C2E0C6"
+  description: "CI・インフラ"
+
+# priority
+- name: "P0"
+  color: "B60205"
+  description: "ブロッカー"
+- name: "P1"
+  color: "D93F0B"
+  description: "必須"
+- name: "P2"
+  color: "FBCA04"
+  description: "あると良い"
+- name: "P3"
+  color: "FEF2C0"
+  description: "いつか"
+
+# status
+- name: "needs-confirm"
+  color: "F9D0C4"
+  description: "人の確認が必要（自動マージしない）"
+- name: "blocked"
+  color: "000000"
+  description: "他の作業・人の作業待ち"
+- name: "good first issue"
+  color: "7057FF"
+  description: "取り掛かりやすい"
+- name: "dependencies"
+  color: "0366D6"
+  description: "依存関係の更新"

@@ -1,0 +1,43 @@
+name: pr-title
+
+# PR タイトルが Conventional Commits の形式かを確かめる。
+# スカッシュマージでは PR タイトルがそのまま main のコミットメッセージになるため、ここで形式をそろえる。
+# scopes を変えたら docs/AI_GIT_WORKFLOW.md §3 も同じにする。
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  conventional-commits:
+    runs-on: ubuntu-latest
+    steps:
+      # サードパーティの Action はコミットのハッシュで固定する（v6.1.1）
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          # プロジェクトに合わせて書き換える
+          scopes: |
+            api
+            ui
+            db
+            docs
+            ci
+            deps
+          requireScope: false
+          # 日本語の subject を許可するため、大文字小文字の規則は課さない
+          subjectPattern: ^.+$

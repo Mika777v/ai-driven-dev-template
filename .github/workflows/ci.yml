@@ -1,0 +1,51 @@
+name: ci
+
+# すべての PR と main への push で動くゲート。
+# 既定ブランチの必須チェックは ci-ok と pr-title（conventional-commits）の2つだけにする（scripts/github/setup-repo.sh）。
+# チェックを増やすときは checks ジョブに足すか、新しいジョブを作って ci-ok の needs に加える。
+# そうすればリポジトリの設定（Ruleset）を変えずに済む。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 言語に合わせたセットアップをここに足す（例: actions/setup-node・actions/setup-python・actions/setup-java）
+      # 公式（actions/*）以外の Action はコミットのハッシュで固定する
+
+      # 型チェック・lint・テストは scripts/check.sh にまとめる（手元でも CI でも同じコマンドを使う）
+      - name: Check
+        run: |
+          if [ -f scripts/check.sh ]; then
+            bash scripts/check.sh
+          else
+            echo "scripts/check.sh が無いため、チェックを飛ばします"
+          fi
+
+  # 必須チェック。スキップされたジョブは成功扱い、失敗・キャンセルがあれば失敗にする
+  ci-ok:
+    if: always()
+    needs: [checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "results: $RESULTS"
+          if echo "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
+            echo "::error::いずれかのチェックが失敗またはキャンセルされました"
+            exit 1
+          fi

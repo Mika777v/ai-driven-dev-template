@@ -1,0 +1,47 @@
+name: Task
+description: 1つの PR（ときに2つ）で終わる作業。親の Epic の sub-issue にする
+title: "[Task] "
+labels: ["type:task"]
+body:
+  - type: input
+    id: parent
+    attributes:
+      label: 親 Epic
+      placeholder: "#12"
+    validations:
+      required: true
+  - type: textarea
+    id: work
+    attributes:
+      label: 作業内容
+      description: 何を変えるか。触るファイル・確かめ方が決まっていれば書く
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 受け入れ条件
+      value: |
+        - [ ] Given ... When ... Then ...
+  - type: textarea
+    id: dod
+    attributes:
+      label: 完了条件（Definition of Done）
+      value: |
+        - [ ] 受け入れ条件を満たす
+        - [ ] テストを追加・更新した
+        - [ ] CI がグリーン
+        - [ ] 文書を更新した（必要なら）
+    validations:
+      required: true
+  - type: textarea
+    id: confirm
+    attributes:
+      label: 確認が必要な項目
+      description: ADR・DB スキーマ・要件・運用ルール・依存のメジャー更新などを含むなら書き、needs-confirm を付ける（docs/AI_WORKFLOW.md §5）
+      value: なし（自動マージ）
+  - type: dropdown
+    id: size
+    attributes:
+      label: 見積り
+      options: ["XS (≤2h)", "S (≤0.5d)", "M (≤1d)", "L (≤3d)", "XL (要分割)"]

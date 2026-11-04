@@ -1,0 +1,35 @@
+name: Epic
+description: 複数の Task をまとめる大きな単位（AI_PROJECT_CONTEXT の「進め方」の1ステップ）。子は sub-issue で結び付ける
+title: "[Epic] "
+labels: ["type:epic"]
+body:
+  - type: input
+    id: epic_id
+    attributes:
+      label: Epic ID
+      placeholder: E01
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: ゴール
+      description: 終わったときに何ができるようになっているか。機能の ID（F1 など）も書く
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: スコープ / 対象外
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Task
+      description: sub-issue で結び付ける。ここには一覧と PR 番号を書き添える
+      value: |
+        - [ ] E01-T1 ...
+  - type: textarea
+    id: refs
+    attributes:
+      label: 参考
+      placeholder: docs/AI_PROJECT_CONTEXT.md §3
