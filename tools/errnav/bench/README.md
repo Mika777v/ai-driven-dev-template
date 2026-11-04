@@ -13,6 +13,8 @@
 | B2 | ライブラリの奥のエラー | ルートの INSERT で運賃と交通手段の値が入れ違い | `CHECK constraint failed: transport IN (...)` | `.run()` の行（原因は数行下の引数の並び） |
 | B3 | 例外なし（値だけが違う） | 一括設定の日付のループが `<` で、最後の日が抜ける | アサーションの失敗だけ | テストの行（原因の `bulk.ts` は示せない） |
 
+不具合は、routepense の `422bdc0`（CLAUDE.md を短くした [Mika777v/routepense#102](https://github.com/Mika777v/routepense/pull/102) の前の main）に当てる。`without`・`with` の「今の CLAUDE.md」は、このときの約 10.8KB の版。結果を比べられるよう、既定で固定している（変えるときは `BENCH_BASE`）。
+
 正解の範囲は [`scenarios.tsv`](scenarios.tsv)。errnav が示す行をそのまま答えただけでは正解にならないようにしてある（B1・B2）。
 
 ## 条件
