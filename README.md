@@ -15,6 +15,7 @@ Claude Code・GitHub Copilot・Cursor・Gemini・Cline・Roo Code など、複�
 - **個人開発と小規模チームの両方で使える** — 違いは「承認数」と「区切りの単位」くらい。両方の記載例を付けた
 - **AI が読みやすい** — 1ファイル1役割、要点は箇条書きと表、ファイル冒頭に「目的・いつ読むか」、記載例は折りたたんで末尾に
 - **差し替え箇所が明確** — 差し替える値は `{{PROJECT_NAME}}` の形にそろえ、`scripts/find-placeholders.sh` で残りを探せる
+- **IDE に依存しない障害解析ツールつき** — `tools/errnav` で、ログのエラーから発生箇所のソースへすぐに飛べる。再現の確認と、AI に渡すコンテキストの生成もできる（[使い方](tools/errnav/README.md)）
 - **実際の開発で使った運用から作った** — 個人開発の 2 つのリポジトリ（経費精算アプリ・社内規程の検索ナビ）で、Issue・PR・Actions を使って AI と進めたときのルールを一般化した
 
 ## 構成
@@ -51,10 +52,17 @@ Claude Code・GitHub Copilot・Cursor・Gemini・Cline・Roo Code など、複�
 │       ├── pr-title.yml               PR タイトルの Conventional Commits 検査
 │       └── labels.yml                 labels.yml をリポジトリに同期
 │
-└── scripts/
-    ├── check.sh                       PR 前の確認（型・lint・テスト）を1本に
-    ├── find-placeholders.sh           差し替え漏れ {{...}} を探す
-    └── github/setup-repo.sh           スカッシュだけ・自動マージ・ルールセットを API で設定
+├── scripts/
+│   ├── check.sh                       PR 前の確認（型・lint・テスト）を1本に
+│   ├── find-placeholders.sh           差し替え漏れ {{...}} を探す
+│   └── github/setup-repo.sh           スカッシュだけ・自動マージ・ルールセットを API で設定
+│
+└── tools/errnav/                      IDE に依存しない障害解析ツール（Bash）
+    ├── bin/errnav                     ログ検出・エラー抽出・発生箇所・トレース・ソースジャンプ・
+    │                                  呼び出し経路・AI 用コンテキスト・再現の確認
+    ├── lib/  plugins/  tests/         plugins は php / node / python / java / go / ruby
+    ├── README.md                      使い方
+    └── ARCHITECTURE.md                設計
 ```
 
 ### ファイルの役割の分け方

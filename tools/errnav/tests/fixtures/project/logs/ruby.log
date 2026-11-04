@@ -1,0 +1,3 @@
+lib/app.rb:2:in `boom': boom (RuntimeError)
+	from lib/app.rb:5:in `run'
+	from lib/app.rb:7:in `<main>'

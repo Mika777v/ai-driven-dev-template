@@ -14,6 +14,12 @@ cd "$(dirname "$0")/.."
 # ./gradlew build
 # ------------------------------------------------------------
 
+# 同梱の障害解析ツール（tools/errnav）を使わないなら、ディレクトリごと消してよい
+if [ -f tools/errnav/tests/run.sh ]; then
+  echo "==> errnav のテスト"
+  bash tools/errnav/tests/run.sh
+fi
+
 echo "==> markdown の差し替え漏れ（{{...}}）の確認"
 # テンプレートのままの値が残っていても CI は落とさない。導入が終わったら、下の行の "|| true" を消して必須にする
 bash scripts/find-placeholders.sh || true

@@ -31,6 +31,7 @@ bash scripts/find-placeholders.sh
 - [ ] GitHub でこのリポジトリを開き、「Use this template」→「Create a new repository」
 - [ ] 既存のプロジェクトに足すときは、必要なファイルだけをコピーする（最低限: `AGENTS.md`・`docs/AI_*.md`・`docs/PROGRESS.md`・`.github/`）
 - [ ] 使わない AI ツールの入口ファイルを消す（`CLAUDE.md`・`GEMINI.md`・`.github/copilot-instructions.md`・`.cursor/`・`.clinerules/`・`.roo/`）
+- [ ] 障害解析ツール（`tools/errnav/`）を使わないなら消す。使うなら `.errnav/config` にログの場所とエディタを書く（`tools/errnav/README.md`「設定」）
 
 ## 2. 文書を埋める（AI に任せてよい）
 

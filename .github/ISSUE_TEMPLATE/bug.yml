@@ -27,3 +27,14 @@ body:
     attributes:
       label: 環境・ログ
       description: 版・OS・ブラウザなど。ログに秘密情報が含まれないか確かめてから貼る
+  - type: textarea
+    id: errnav
+    attributes:
+      label: 解析のコンテキスト（任意）
+      description: "`tools/errnav/bin/errnav context latest` の出力。トレース・発生箇所のソース・最近の変更がまとまる（秘密情報は伏せるが、貼る前に目で確かめる）"
+      render: markdown
+  - type: input
+    id: repro
+    attributes:
+      label: 再現のコマンド（任意）
+      placeholder: "tools/errnav/bin/errnav repro --expect 'Undefined variable' -- curl -s localhost:8000/users/7"
