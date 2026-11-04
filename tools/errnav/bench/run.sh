@@ -71,7 +71,7 @@ cmd_prepare() {
   rm -rf "$OUT/base"; mkdir -p "$OUT/base"
   git -C "$OUT/src" archive "origin/$BASE" | tar -x -C "$OUT/base" || die "展開に失敗しました"
   info "==> 依存を入れる: $INSTALL"
-  (cd "$OUT/base" && eval "$INSTALL") > "$OUT/install.log" 2>&1 || die "依存を入れられません（$OUT/install.log）"
+  (cd "$OUT/base" && eval "$INSTALL") < /dev/null > "$OUT/install.log" 2>&1 || die "依存を入れられません（$OUT/install.log）"
   local id prefix
   while IFS=$'\t' read -r id prefix _; do
     [ -n "$(bug_commit "$prefix")" ] || die "$id の不具合のコミット（件名「$prefix」）が $BUGS にありません"
@@ -112,7 +112,7 @@ cmd_dry() {
     ws="$OUT/ws-dry"
     make_workspace "$id" with "$ws"
     printf '== %s（%s）\n' "$id" "$kind"
-    (cd "$ws" && eval "$TEST_CMD") > "$OUT/dry-$id.out" 2>&1 && info "  !! テストが通ってしまいました（不具合が効いていない）"
+    (cd "$ws" && eval "$TEST_CMD") < /dev/null > "$OUT/dry-$id.out" 2>&1 && info "  !! テストが通ってしまいました（不具合が効いていない）"
     printf '  テストの失敗: %s\n' "$(grep -E '^ +Tests ' "$OUT/dry-$id.out" | head -n 1 | sed 's/^ *//')"
     printf '  正解: %s:%s-%s\n' "$file" "$lo" "$hi"
     (cd "$ws" && ERRNAV_COLOR=never tools/errnav/bin/errnav scan - < "$OUT/dry-$id.out" | sed -n '2,3p' | sed 's/^/  errnav: /')
@@ -143,12 +143,13 @@ cmd_run() {
         start=$(date +%s)
         # 調べるだけにする: 書き換えのツールとサブエージェント（呼び出しの回数が数えられなくなる）は使わせない
         # ユーザーの設定（フックなど）と MCP は読まない。条件をそろえるため
+        # 標準入力は /dev/null にする（claude が while の入力のシナリオの一覧を読んでしまい、次のシナリオが飛ばされるため）
         (cd "$ws" && "${to[@]}" claude -p "$prompt" --output-format stream-json --verbose \
           --allowedTools "Bash" "Read" "Grep" "Glob" \
           --disallowedTools "Edit" "Write" "NotebookEdit" "Task" "Agent" "WebFetch" "WebSearch" \
           --setting-sources project,local --strict-mcp-config --no-session-persistence \
           --max-budget-usd "$MAX_BUDGET" ${BENCH_MODEL:+--model "$BENCH_MODEL"} \
-          > "$OUT/runs/$tag.jsonl" 2> "$OUT/runs/$tag.err")
+          < /dev/null > "$OUT/runs/$tag.jsonl" 2> "$OUT/runs/$tag.err")
         status=$?
         end=$(date +%s)
         printf '%s\t%s\t%s\n' "$status" "$((end - start))" "$(git -C "$ws" status --porcelain | grep -v '^?? .errnav/' | wc -l | tr -d ' ')" > "$OUT/runs/$tag.meta"
