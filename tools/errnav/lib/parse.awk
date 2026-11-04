@@ -4,9 +4,10 @@
 #   - 正規表現の {n} の繰り返しは使わない（古い mawk が対応していない）
 #   - match() の第3引数（gawk 専用）は使わない。RSTART / RLENGTH と substr で切り出す
 #
+# 入力の環境変数（正規表現は -v で渡さない。-v の値はエスケープが処理され、gawk では「\[」の「\」が消えるため）:
+#   ERRNAV_AWK_ENTRY_RE   エントリの始まりの行の正規表現。空なら「字下げの無い行で始まる」とみなす（タイムスタンプの無い出力向け）
+#   ERRNAV_AWK_ERROR_RE   エラーとみなす行の正規表現
 # 入力の変数（-v で渡す）:
-#   entry_re   エントリの始まりの行の正規表現。空なら「字下げの無い行で始まる」とみなす（タイムスタンプの無い出力向け）
-#   error_re   エラーとみなす行の正規表現
 #   logname    出力に書くログの名前
 #   id0        イベントの番号の開始（この値の次から振る）
 #   lineoff    ログの行番号に足す値（ログの途中から読むとき）
@@ -196,7 +197,10 @@ function flush(   lv, iserr, i, b, k, sum, ts, f, out) {
   close(events); close(frames)
 }
 
-BEGIN { id = id0 + 0; lineoff = lineoff + 0; reset_entry() }
+BEGIN {
+  entry_re = ENVIRON["ERRNAV_AWK_ENTRY_RE"]; error_re = ENVIRON["ERRNAV_AWK_ERROR_RE"]
+  id = id0 + 0; lineoff = lineoff + 0; reset_entry()
+}
 
 {
   s = $0; sub(/\r$/, "", s)

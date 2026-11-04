@@ -62,7 +62,10 @@ errnav_parse_one() {
   # タイムスタンプなどのある行が1つでもあれば「エントリ」で区切る。無ければ字下げで区切る
   if grep -Eq "$ERRNAV_ENTRY_RE_ALL" "$tmp" 2>/dev/null; then mode="$ERRNAV_ENTRY_RE_ALL"; else mode=""; fi
   id0=$(awk 'END { print NR }' "$cache/events.tsv")
-  awk -v entry_re="$mode" -v error_re="$ERRNAV_ERROR_RE" -v logname="$name" -v id0="$id0" \
+  # 正規表現は -v ではなく環境変数で渡す。-v の値は文字列のエスケープとして処理され、
+  # gawk では「\[」の「\」が消えて正規表現が壊れる（環境変数の値はそのまま渡る）
+  ERRNAV_AWK_ENTRY_RE="$mode" ERRNAV_AWK_ERROR_RE="$ERRNAV_ERROR_RE" \
+  awk -v logname="$name" -v id0="$id0" \
       -v lineoff="$lineoff" -v rawdir="$cache/raw" -v events="$cache/events.tsv" \
       -v frames="$cache/frames.raw.tsv" -v warn="${ERRNAV_WARN:-0}" \
       -f "$ERRNAV_HOME/lib/parse.awk" "$tmp"
