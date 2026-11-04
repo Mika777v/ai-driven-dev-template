@@ -11,7 +11,8 @@
 # 主な設定（環境変数）:
 #   BENCH_OUT          作業と結果の置き場所（既定: ${TMPDIR:-/tmp}/errnav-bench）
 #   BENCH_REPO         対象のリポジトリ（既定: https://github.com/Mika777v/routepense）
-#   BENCH_BASE         不具合を入れる前のブランチ（既定: main）
+#   BENCH_BASE         不具合を入れる前の土台（コミットかブランチ。既定: 422bdc0。
+#                      routepense の CLAUDE.md を短くする前の main。結果を比べられるよう固定している）
 #   BENCH_BUGS         不具合のコミットがあるブランチ（既定: bench/errnav-bugs）
 #   BENCH_RUNS         1つのシナリオ・条件で何回動かすか（既定: 3）
 #   BENCH_ONLY         動かすシナリオを絞る（例: "B1 B3"）
@@ -33,7 +34,7 @@ ERRNAV_DIR=$(cd "$HERE/.." && pwd)
 
 OUT="${BENCH_OUT:-${TMPDIR:-/tmp}/errnav-bench}"
 REPO="${BENCH_REPO:-https://github.com/Mika777v/routepense}"
-BASE="${BENCH_BASE:-main}"
+BASE="${BENCH_BASE:-422bdc0}"
 BUGS="${BENCH_BUGS:-bench/errnav-bugs}"
 RUNS="${BENCH_RUNS:-3}"
 CONDITIONS="${BENCH_CONDITIONS:-without with slim slim-skill}"
@@ -67,13 +68,17 @@ bug_commit() {
 cmd_prepare() {
   mkdir -p "$OUT"
   if [ -d "$OUT/src/.git" ]; then
-    git -C "$OUT/src" fetch -q origin "$BASE" "$BUGS" || die "fetch に失敗しました"
+    git -C "$OUT/src" fetch -q origin main "$BUGS" || die "fetch に失敗しました"
   else
     git clone -q --no-single-branch "$REPO" "$OUT/src" || die "clone に失敗しました: $REPO"
     git -C "$OUT/src" fetch -q origin "$BUGS" || die "ブランチ $BUGS がありません"
   fi
   rm -rf "$OUT/base"; mkdir -p "$OUT/base"
-  git -C "$OUT/src" archive "origin/$BASE" | tar -x -C "$OUT/base" || die "展開に失敗しました"
+  # ブランチの名前なら origin/ の付いたもの、無ければコミットとして使う
+  local base_ref="origin/$BASE"
+  git -C "$OUT/src" rev-parse -q --verify "$base_ref^{commit}" >/dev/null || base_ref="$BASE"
+  git -C "$OUT/src" rev-parse -q --verify "$base_ref^{commit}" >/dev/null || die "土台 $BASE が見つかりません"
+  git -C "$OUT/src" archive "$base_ref" | tar -x -C "$OUT/base" || die "展開に失敗しました"
   info "==> 依存を入れる: $INSTALL"
   (cd "$OUT/base" && eval "$INSTALL") < /dev/null > "$OUT/install.log" 2>&1 || die "依存を入れられません（$OUT/install.log）"
   local id prefix
