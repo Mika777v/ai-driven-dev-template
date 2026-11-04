@@ -26,7 +26,7 @@ function clean(s) { gsub(/[\t\r]/, " ", s); s = trim(s); if (length(s) > 400) s 
 function indented(s) { return s ~ /^[ \t]/ }
 
 function reset_entry() {
-  n = 0; nf = 0; in_tb = 0; tb_expect_exc = 0; in_panic = 0; pyblock = 0; cblock = 0
+  n = 0; nf = 0; in_tb = 0; tb_expect_exc = 0; in_panic = 0; in_assert = 0; pyblock = 0; cblock = 0
   exc_first = ""; exc_last = ""; root = ""; prev = ""
 }
 
@@ -96,6 +96,15 @@ function parse_frame(s,   seg, f, l, fn, p, q, rest, fq, pkg) {
     f = rest; sub(/:[0-9]+$/, "", f)
     addf(f, l, "", 0); return 1
   }
+  # vitest:   ❯ load src/app.ts:3:12   /   ❯ src/app.test.ts:10:5
+  if (match(s, /^[ \t]*❯ [^ ]+( [^ ]+)?:[0-9]+:[0-9]+$/)) {
+    rest = substr(s, RSTART, RLENGTH); sub(/^[ \t]*❯ /, "", rest)
+    fn = ""; if (index(rest, " ") > 0) { fn = substr(rest, 1, index(rest, " ") - 1); rest = substr(rest, index(rest, " ") + 1) }
+    sub(/:[0-9]+$/, "", rest)
+    l = rest; sub(/^.*:/, "", l)
+    f = rest; sub(/:[0-9]+$/, "", f)
+    addf(f, l, fn, 0); return 1
+  }
   # Ruby:   from /app/lib/x.rb:5:in `run'   /   /app/lib/x.rb:2:in 'Object#boom'
   if (match(s, /[^ \t:'"`]+\.rb:[0-9]+:in /)) {
     seg = substr(s, RSTART, RLENGTH); rest = substr(s, RSTART + RLENGTH)
@@ -134,6 +143,9 @@ function is_continuation(s) {
   if (s ~ /^[ \t]*$/ || indented(s)) return 1
   if (s ~ /^(Stack trace:|#[0-9]+ |Caused by: |Suppressed: |Traceback \(most recent call last\)|During handling of the above exception|The above exception was the direct cause)/) return 1
   if (in_tb && tb_expect_exc) return 1          # Python のトレースの最後の例外の行
+  # vitest / jest のアサーション: 期待値と実際の値の差分（字下げの無い JSON も出る）が続く。
+  # 区切りの線（⎯）か、次の例外の行までを1件とみなす
+  if (in_assert) return (s !~ /^⎯/ && s !~ /^[A-Za-z_$][A-Za-z0-9_$.]*(Error|Exception)[A-Za-z]*: /)
   if (in_panic && s ~ /^(goroutine [0-9]+ |created by |\[signal |exit status |[A-Za-z_][^ ]*\(.*\)$)/) return 1
   return 0
 }
@@ -207,6 +219,7 @@ BEGIN {
   if (!is_continuation(s)) {
     flush(); reset_entry(); start = NR
     if (s ~ /^(panic|fatal error): /) in_panic = 1
+    if (s ~ /^(AssertionError|Error: expect\()/) in_assert = 1
   }
   n++; L[n] = s
 

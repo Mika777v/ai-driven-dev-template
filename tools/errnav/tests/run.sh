@@ -119,6 +119,15 @@ echo "== 標準入力"
 out=$(sed -n '1,30p' "$PROJECT/logs/node.log" | en scan -)
 has "パイプで渡した出力を読む" "$out" "src/app.js:3"
 
+echo "== テストの出力（vitest）"
+out=$(en scan - < "$HERE/fixtures/vitest.out")
+has "vitest の例外" "$out" "TypeError: Cannot read properties of undefined"
+has "vitest のアサーション（差分の JSON で切れない）" "$out" "AssertionError: expected undefined to deeply equal"
+eq  "vitest のイベントの数" "$(awk 'END { print NR }' "$ERRNAV_CACHE_DIR/events.tsv")" "2"
+eq  "vitest: ❯ 関数 パス:行:列" "$(top_of "$(id_of 'TypeError')")" "src/app.js:3"
+eq  "vitest: 関数名" "$(awk -F'\t' '$1 == 1 && $2 == 0 { print $5 }' "$ERRNAV_CACHE_DIR/frames.tsv")" "load"
+eq  "vitest: ❯ パス:行:列" "$(top_of "$(id_of 'AssertionError')")" "src/app.js:6"
+
 echo "== 再現の確認"
 cp -R "$PROJECT" "$WORK/p"
 # repro はコマンドを今のディレクトリで動かすので、プロジェクトの中に入って試す
