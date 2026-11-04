@@ -1,0 +1,255 @@
+diff --git a/backend/src/daily-records/daily-record-repository.ts b/backend/src/daily-records/daily-record-repository.ts
+index 1e1947b..ce311e3 100644
+--- a/backend/src/daily-records/daily-record-repository.ts
++++ b/backend/src/daily-records/daily-record-repository.ts
+@@ -25,6 +25,8 @@ export interface DailyRecordRepository {
+    * 保存した記録を日付の古い順に返す。
+    */
+   saveMany(userId: string, days: { date: DateString; workStyle: WorkStyle }[]): DailyRecord[];
++  /** その日のメモを保存する（undefined なら消す）。記録が無ければ undefined */
++  saveNote(userId: string, date: DateString, note: string | undefined): DailyRecord | undefined;
+   /** その日の記録を消して「未入力」に戻す（追加の移動も消える）。消せたら true */
+   delete(userId: string, date: DateString): boolean;
+   /** その日の記録に追加の移動を足す。記録が無ければ undefined */
+diff --git a/backend/src/daily-records/daily-record-router.ts b/backend/src/daily-records/daily-record-router.ts
+index cbb8c6d..308c8b3 100644
+--- a/backend/src/daily-records/daily-record-router.ts
++++ b/backend/src/daily-records/daily-record-router.ts
+@@ -115,6 +115,32 @@ export function dailyRecordRouter(
+     res.json(records.saveWorkStyle(userId, date, workStyle));
+   });
+ 
++  // その日のメモを付ける・直す・消す（空ならメモを消す）
++  router.put("/:date/note", (req, res) => {
++    const { date } = req.params;
++    if (!isDateString(date)) {
++      badRequest(res, invalidDate);
++      return;
++    }
++    const body: unknown = req.body;
++    const raw = typeof body === "object" && body !== null ? (body as Record<string, unknown>).note : undefined;
++    if (typeof raw !== "string") {
++      badRequest(res, [{ field: "note", message: "メモは文字列で送ってください" }]);
++      return;
++    }
++    const note = raw.trim();
++    if (note.length > 200) {
++      badRequest(res, [{ field: "note", message: "メモは200文字までにしてください" }]);
++      return;
++    }
++    const saved = records.saveNote(userId, date, note === "" ? undefined : note);
++    if (saved === undefined) {
++      res.status(404).json(recordNotFound);
++      return;
++    }
++    res.json(saved);
++  });
++
+   // その日の記録を消して「未入力」に戻す
+   router.delete("/:date", (req, res) => {
+     const { date } = req.params;
+diff --git a/backend/src/daily-records/sqlite-daily-record-repository.ts b/backend/src/daily-records/sqlite-daily-record-repository.ts
+index a568beb..d74c6dc 100644
+--- a/backend/src/daily-records/sqlite-daily-record-repository.ts
++++ b/backend/src/daily-records/sqlite-daily-record-repository.ts
+@@ -25,6 +25,7 @@ type DailyRecordRow = {
+   route_to: string | null;
+   route_transport: Transport | null;
+   route_one_way_fare: number | null;
++  note: string | null;
+ };
+ 
+ /** extra_trips テーブルの1行 */
+@@ -42,6 +43,8 @@ type ExtraTripRow = {
+ 
+ const RECORD_COLUMNS =
+   "id, user_id, date, work_kind, route_id, route_name, route_from, route_to, route_transport, route_one_way_fare";
++/** 読むときの列（保存の INSERT は勤務区分の列だけを書き、メモは別に書く） */
++const SELECT_COLUMNS = `${RECORD_COLUMNS}, note`;
+ const TRIP_COLUMNS =
+   "id, daily_record_id, from_place, to_place, transport, one_way_fare, trip_type, purpose, source_route_id";
+ 
+@@ -117,7 +120,7 @@ export class SqliteDailyRecordRepository implements DailyRecordRepository {
+     // "2026-11" なら "2026-11-01" 〜 "2026-11-31"。YYYY-MM-DD は文字列のまま大小を比べられる
+     const rows = this.db
+       .prepare(
+-        `SELECT ${RECORD_COLUMNS} FROM daily_records
++        `SELECT ${SELECT_COLUMNS} FROM daily_records
+          WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date`,
+       )
+       .all(userId, `${month}-01`, `${month}-31`) as DailyRecordRow[];
+@@ -126,7 +129,7 @@ export class SqliteDailyRecordRepository implements DailyRecordRepository {
+ 
+   get(userId: string, date: DateString): DailyRecord | undefined {
+     const row = this.db
+-      .prepare(`SELECT ${RECORD_COLUMNS} FROM daily_records WHERE user_id = ? AND date = ?`)
++      .prepare(`SELECT ${SELECT_COLUMNS} FROM daily_records WHERE user_id = ? AND date = ?`)
+       .get(userId, date) as DailyRecordRow | undefined;
+     return row ? this.withExtraTrips([row])[0] : undefined;
+   }
+@@ -169,6 +172,13 @@ export class SqliteDailyRecordRepository implements DailyRecordRepository {
+     }
+   }
+ 
++  saveNote(userId: string, date: DateString, note: string | undefined): DailyRecord | undefined {
++    const result = this.db
++      .prepare("UPDATE daily_records SET note = ?, updated_at = ? WHERE user_id = ? AND date = ?")
++      .run(note ?? null, this.now().toISOString(), userId, date);
++    return result.changes > 0 ? this.get(userId, date) : undefined;
++  }
++
+   delete(userId: string, date: DateString): boolean {
+     // 追加の移動は、外部キーの ON DELETE CASCADE で一緒に消える
+     const result = this.db
+@@ -271,6 +281,7 @@ export class SqliteDailyRecordRepository implements DailyRecordRepository {
+       date: row.date,
+       workStyle: toWorkStyle(row),
+       extraTrips: tripsByRecord.get(row.id) ?? [],
++      ...(row.note !== null && { note: row.note }),
+     }));
+   }
+ }
+diff --git a/backend/src/db/migrations.ts b/backend/src/db/migrations.ts
+index 9d0d29b..46fc137 100644
+--- a/backend/src/db/migrations.ts
++++ b/backend/src/db/migrations.ts
+@@ -76,4 +76,11 @@ export const migrations: readonly { version: number; sql: string }[] = [
+       ALTER TABLE routes ADD COLUMN search_url TEXT;
+     `,
+   },
++  {
++    version: 4,
++    sql: `
++      -- その日のメモ（任意）。今までの記録は NULL（メモなし）のまま読める
++      ALTER TABLE daily_records ADD COLUMN note TEXT;
++    `,
++  },
+ ];
+diff --git a/backend/src/openapi.test.ts b/backend/src/openapi.test.ts
+index 3bcd0a0..6584129 100644
+--- a/backend/src/openapi.test.ts
++++ b/backend/src/openapi.test.ts
+@@ -61,8 +61,8 @@ describe("docs/api/openapi.yaml と backend の API の一致", () => {
+     expect(mounted).toHaveLength(apiRouters(deps).length);
+   });
+ 
+-  it("一覧の作り方の確かめ: 15 個の API がある", () => {
+-    expect(implementedEndpoints()).toHaveLength(15);
++  it("一覧の作り方の確かめ: 16 個の API がある", () => {
++    expect(implementedEndpoints()).toHaveLength(16);
+     expect(implementedEndpoints()).toContain("DELETE /api/daily-records/{date}/extra-trips/{tripId}");
+   });
+ });
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index dfe3a6f..89fa1be 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -166,6 +166,18 @@ paths:
+                 items: { $ref: "#/components/schemas/DailyRecord" }
+         "400": { $ref: "#/components/responses/BadRequest" }
+ 
++  /api/daily-records/{date}/note:
++    parameters:
++      - $ref: "#/components/parameters/Date"
++    put:
++      summary: その日のメモを付ける・直す・消す（空なら消す）
++      responses:
++        "200":
++          description: メモを付けた後のその日の記録
++        "400":
++          description: 入力の誤り
++        "404":
++          description: その日の記録が無い
+   /api/daily-records/{date}:
+     parameters:
+       - $ref: "#/components/parameters/Date"
+diff --git a/shared/src/csv.test.ts b/shared/src/csv.test.ts
+index 120efce..5f8e804 100644
+--- a/shared/src/csv.test.ts
++++ b/shared/src/csv.test.ts
+@@ -22,7 +22,7 @@ function record(date: string, workStyle: WorkStyle, extraTrips: ExtraTrip[] = []
+ describe("monthCsvRows", () => {
+   it("出勤日は通常ルートの1行（往復・金額は片道 × 2）", () => {
+     expect(monthCsvRows([record("2026-11-04", commute)])).toEqual([
+-      ["2026-11-04", "水", "", "出勤", "通常", "A駅", "B駅", "電車", "往復", "220", "440", "自宅↔本社", ""],
++      ["2026-11-04", "水", "", "出勤", "通常", "A駅", "B駅", "電車", "往復", "220", "440", "自宅↔本社", "", ""],
+     ]);
+   });
+ 
+@@ -38,8 +38,8 @@ describe("monthCsvRows", () => {
+       ]),
+     ]);
+     expect(rows).toEqual([
+-      ["2026-11-05", "木", "", "在宅", "追加", "B駅", "C駅", "バス", "片道", "160", "160", "", "客先B打合せ"],
+-      ["2026-11-05", "木", "", "在宅", "追加", "B駅", "C駅", "その他", "往復", "160", "320", "", ""],
++      ["2026-11-05", "木", "", "在宅", "追加", "B駅", "C駅", "バス", "片道", "160", "160", "", "客先B打合せ", ""],
++      ["2026-11-05", "木", "", "在宅", "追加", "B駅", "C駅", "その他", "往復", "160", "320", "", "", ""],
+     ]);
+   });
+ 
+@@ -92,8 +92,8 @@ describe("monthCsv", () => {
+     expect(csv.startsWith(UTF8_BOM)).toBe(true);
+     expect(csv.slice(UTF8_BOM.length).split("\r\n")).toEqual([
+       CSV_HEADER.join(","),
+-      "2026-11-04,水,,出勤,通常,A駅,B駅,電車,往復,220,440,自宅↔本社,",
+-      '2026-11-04,水,,出勤,追加,B駅,C駅,バス,片道,160,160,,"打合せ, 資料"',
++      "2026-11-04,水,,出勤,通常,A駅,B駅,電車,往復,220,440,自宅↔本社,,",
++      '2026-11-04,水,,出勤,追加,B駅,C駅,バス,片道,160,160,,"打合せ, 資料",',
+       "",
+     ]);
+   });
+diff --git a/shared/src/csv.ts b/shared/src/csv.ts
+index b8f6e54..4886e12 100644
+--- a/shared/src/csv.ts
++++ b/shared/src/csv.ts
+@@ -27,6 +27,7 @@ export const CSV_HEADER = [
+   "金額",
+   "ルート名",
+   "目的",
++  "メモ",
+ ] as const;
+ 
+ /** タプルの各要素を string にした型（要素の数はそのまま）。型引数 T を通すと、マップ型がタプルのまま残る */
+@@ -40,7 +41,7 @@ const WORK_STYLE_LABELS: Record<WorkStyleKind, string> = { remote: "在宅", com
+ const TRANSPORT_LABELS: Record<Transport, string> = { train: "電車", bus: "バス", other: "その他" };
+ const TRIP_TYPE_LABELS: Record<TripType, string> = { oneWay: "片道", roundTrip: "往復" };
+ 
+-type CsvRecord = Pick<DailyRecord, "date" | "workStyle" | "extraTrips">;
++type CsvRecord = Pick<DailyRecord, "date" | "workStyle" | "extraTrips" | "note">;
+ 
+ /** 日次記録の一覧から、明細の行（見出しを除く）を作る。日付の順に並べ、同じ日は通常 → 追加の順 */
+ export function monthCsvRows(records: readonly CsvRecord[]): CsvRow[] {
+@@ -66,6 +67,7 @@ function recordRows(record: CsvRecord): CsvRow[] {
+       String(workStyleFare(workStyle)),
+       route.name,
+       "",
++      record.note ?? "",
+     ]);
+   }
+   for (const trip of record.extraTrips) {
+@@ -80,6 +82,7 @@ function recordRows(record: CsvRecord): CsvRow[] {
+       String(extraTripFare(trip)),
+       "",
+       trip.purpose ?? "",
++      record.note ?? "",
+     ]);
+   }
+   return rows;
+diff --git a/shared/src/daily-record.ts b/shared/src/daily-record.ts
+index c198718..80a8c37 100644
+--- a/shared/src/daily-record.ts
++++ b/shared/src/daily-record.ts
+@@ -10,6 +10,13 @@ export type DailyRecord = {
+   workStyle: WorkStyle;
+   /** 追加の移動（0件以上） */
+   extraTrips: ExtraTrip[];
++  /** その日のメモ（任意。無ければプロパティごと付けない） */
++  note?: string;
++};
++
++/** PUT /api/daily-records/:date/note の本文。空ならメモを消す */
++export type DailyNoteInput = {
++  note: string;
+ };
+ 
+ /** PUT /api/daily-records/:date の本文 */
