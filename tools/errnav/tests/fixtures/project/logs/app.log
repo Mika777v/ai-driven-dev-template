@@ -1,0 +1,9 @@
+2026-11-04 10:05:00,123 INFO  worker started
+2026-11-04 10:05:01,456 ERROR worker job failed: token=abcd1234efgh5678 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig
+Traceback (most recent call last):
+  File "/app/src/app.py", line 7, in main
+    parse("{bad")
+  File "/app/src/app.py", line 4, in parse
+    return json.loads(s)
+ValueError: bad payload
+2026-11-04 10:05:02,000 INFO  shutting down

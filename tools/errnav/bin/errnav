@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# errnav — IDE に依存しない障害解析ツール
+#
+# ログからエラーを取り出し、スタックトレースを正規化して、発生箇所のソースへすぐに飛べるようにする。
+# 詳しくは tools/errnav/README.md（使い方）と tools/errnav/ARCHITECTURE.md（設計）。
+
+set -o pipefail
+
+# シンボリックリンク経由でも本体の場所を求める（readlink -f が無い macOS 向けに自前で辿る）
+_src="${BASH_SOURCE[0]}"
+while [ -h "$_src" ]; do
+  _dir=$(cd -P "$(dirname "$_src")" && pwd)
+  _src=$(readlink "$_src"); case "$_src" in /*) ;; *) _src="$_dir/$_src" ;; esac
+done
+ERRNAV_SELF="$(cd -P "$(dirname "$_src")" && pwd)/$(basename "$_src")"
+ERRNAV_HOME="$(cd -P "$(dirname "$_src")/.." && pwd)"
+unset _src _dir
+
+# shellcheck source=../lib/core.sh
+. "$ERRNAV_HOME/lib/core.sh"
+# shellcheck source=../lib/scan.sh
+. "$ERRNAV_HOME/lib/scan.sh"
+# shellcheck source=../lib/view.sh
+. "$ERRNAV_HOME/lib/view.sh"
+# shellcheck source=../lib/context.sh
+. "$ERRNAV_HOME/lib/context.sh"
+# shellcheck source=../lib/repro.sh
+. "$ERRNAV_HOME/lib/repro.sh"
+
+usage() {
+  cat <<'EOF'
+errnav — IDE に依存しない障害解析ツール
+
+使い方:
+  errnav                         エラーの一覧を開く（fzf があれば選んで開く。無ければ一覧を出す）
+  errnav logs                    検出したログファイル（新しい順）
+  errnav scan [LOG...|-]         ログからエラーを取り出して一覧にする（- は標準入力。省略すると自動で検出）
+  errnav list                    前回の scan の一覧をもう一度出す
+  errnav show [ID]               エラーの詳細（トレース・発生箇所のソース）。ID 省略で最新
+  errnav tree [ID] [--all]       呼び出し経路（入口 → 発生箇所）。--all で外部のフレームも全部
+  errnav open [ID] [FRAME]       エディタで発生箇所を開く（fzf があればフレームを選べる）
+  errnav context [ID] [-o FILE] [--copy] [--frames N]
+                                 AI 解析用のコンテキスト（Markdown）
+  errnav repro [--expect RE] [--bisect] [--log FILE] -- CMD...
+                                 コマンドを動かし、その間に増えたログだけでエラーを確かめる
+  errnav snippet FILE:LINE       ソースの抜粋
+  errnav plugins                 プラグインと、このプロジェクトで有効なもの
+  errnav doctor                  動作環境の確認
+
+共通のオプション:
+  --root DIR      プロジェクトのルート（既定: git のルート、無ければ今のディレクトリ）
+  --limit N       一覧の件数（既定 20）
+  --warn          WARN もエラーとして扱う
+  --color / --no-color
+
+設定: <ROOT>/.errnav/config（シェルの変数。例は tools/errnav/README.md）
+EOF
+}
+
+# ---- 共通のオプションを先に読む ------------------------------------------------------------
+ERRNAV_LIMIT=20
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --root) ERRNAV_ROOT="$2"; shift 2 ;;
+    --root=*) ERRNAV_ROOT="${1#*=}"; shift ;;
+    --limit) ERRNAV_LIMIT="$2"; shift 2 ;;
+    --warn) ERRNAV_WARN=1; shift ;;
+    --color) ERRNAV_COLOR=always; shift ;;
+    --no-color) ERRNAV_COLOR=never; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --version) echo "errnav $ERRNAV_VERSION"; exit 0 ;;
+    --) args[${#args[@]}]="$1"; shift; while [ $# -gt 0 ]; do args[${#args[@]}]="$1"; shift; done ;;
+    *) args[${#args[@]}]="$1"; shift ;;
+  esac
+done
+set -- "${args[@]}"
+
+errnav_init
+
+cmd="${1:-}"; [ $# -gt 0 ] && shift
+
+case "$cmd" in
+  logs)
+    found=$(errnav_detect_logs)
+    if [ -z "$found" ]; then errnav_info "ログが見つかりません（.errnav/config の ERRNAV_LOGS で指定できます）"; exit 1; fi
+    printf '%s\n' "$found" | while IFS= read -r f; do
+      case "$f" in /*) p="$f" ;; *) p="$ERRNAV_ROOT/$f" ;; esac
+      printf '%8s 行  %s\n' "$(wc -l < "$p" | tr -d ' ')" "$f"
+    done
+    ;;
+
+  scan)
+    if [ $# -eq 0 ]; then
+      logs=()
+      while IFS= read -r f; do [ -n "$f" ] && logs[${#logs[@]}]="$f"; done <<ERRNAV_EOF
+$(errnav_detect_logs)
+ERRNAV_EOF
+      [ ${#logs[@]} -gt 0 ] || errnav_die "ログが見つかりません。errnav scan <ログ> か、パイプで渡してください（例: cmd 2>&1 | errnav scan -）"
+      errnav_info "$C_DIM読むログ: ${logs[*]}$C_RESET"
+      errnav_scan_files "${logs[@]}"
+    else
+      errnav_scan_files "$@"
+    fi
+    errnav_print_groups "$ERRNAV_LIMIT"
+    ;;
+
+  list|ls)
+    errnav_ensure_scanned
+    errnav_print_groups "$ERRNAV_LIMIT"
+    ;;
+
+  show)    errnav_ensure_scanned; errnav_show "$1" ;;
+  tree)
+    errnav_ensure_scanned
+    id=; all=
+    for a in "$@"; do case "$a" in --all) all=1 ;; *) id="$a" ;; esac; done
+    errnav_tree "$id" "$all"
+    ;;
+  open)    errnav_ensure_scanned; errnav_open "$1" "$2" ;;
+
+  context|ctx)
+    errnav_ensure_scanned
+    id=; out=; copy=; nframes=3
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -o|--output) out="$2"; shift 2 ;;
+        --copy) copy=1; shift ;;
+        --frames) nframes="$2"; shift 2 ;;
+        *) id="$1"; shift ;;
+      esac
+    done
+    if [ -n "$out" ]; then
+      errnav_context "$id" "$nframes" > "$out" && errnav_info "書き出しました: $out"
+    elif [ -n "$copy" ]; then
+      errnav_context "$id" "$nframes" | errnav_copy && errnav_info "クリップボードに写しました"
+    else
+      errnav_context "$id" "$nframes"
+    fi
+    ;;
+
+  repro)   errnav_repro "$@"; exit $? ;;
+
+  snippet)
+    loc="$1"; [ -n "$loc" ] || errnav_die "使い方: errnav snippet FILE:LINE"
+    errnav_snippet "${loc%:*}" "${loc##*:}"
+    ;;
+
+  plugins)
+    for p in $ERRNAV_ALL_PLUGINS; do
+      case " $ERRNAV_ACTIVE " in *" $p "*) printf '%s● %s%s（有効）\n' "$C_GREEN" "$p" "$C_RESET" ;; *) printf '○ %s\n' "$p" ;; esac
+    done
+    ;;
+
+  doctor)
+    printf 'errnav %s\n' "$ERRNAV_VERSION"
+    printf 'OS:        %s\n' "$(errnav_os)"
+    printf 'bash:      %s\n' "$BASH_VERSION"
+    printf 'awk:       %s\n' "$( (awk --version 2>/dev/null || awk -W version 2>/dev/null) | head -n 1)"
+    printf 'ルート:    %s\n' "$ERRNAV_ROOT"
+    printf 'キャッシュ: %s\n' "$ERRNAV_CACHE"
+    printf 'プラグイン: %s\n' "${ERRNAV_ACTIVE:- （なし。共通の解析だけを使う）}"
+    for t in rg fd fzf bat git; do
+      case "$t" in
+        fd) v="$ERRNAV_FD" ;; bat) v="$ERRNAV_BAT" ;; fzf) v="$ERRNAV_FZF" ;; rg) v="$ERRNAV_RG" ;; *) errnav_have "$t" && v="$t" || v= ;;
+      esac
+      if [ -n "$v" ]; then printf '  %s✓%s %-4s %s\n' "$C_GREEN" "$C_RESET" "$t" "$(command -v "$v")"
+      else printf '  %s-%s %-4s 無し（%s）\n' "$C_YELLOW" "$C_RESET" "$t" "$(case $t in fzf) echo '一覧を選ぶ画面が使えない。番号で指定する' ;; bat) echo 'ソースは色なしで表示' ;; fd) echo 'find で代わりに探す' ;; rg) echo 'コンテキストの関数の検索に grep を使う' ;; git) echo 'コンテキストに変更の履歴が入らない' ;; esac)"
+      fi
+    done
+    printf 'エディタ:  %s\n' "${ERRNAV_OPEN_CMD:-${ERRNAV_EDITOR:-${VISUAL:-${EDITOR:-（未設定。nvim / vim / vi / nano の順に探す）}}}}"
+    ;;
+
+  "")
+    # 対話: fzf で選んでプレビューし、Enter で開く
+    errnav_ensure_scanned
+    if [ -z "$ERRNAV_FZF" ] || [ ! -t 0 ] || [ ! -t 1 ]; then
+      errnav_print_groups "$ERRNAV_LIMIT"
+      printf '\n%sfzf を入れると、ここで選んでプレビューし、Enter でエディタを開けます。%s\n' "$C_DIM" "$C_RESET"
+      exit 0
+    fi
+    self=$(printf '%q' "$ERRNAV_SELF")
+    root=$(printf '%q' "$ERRNAV_ROOT")
+    errnav_groups_for_fzf | "$ERRNAV_FZF" --ansi --delimiter='\t' --with-nth=2 --no-sort \
+      --header='Enter: エディタで開く / Ctrl-T: 呼び出し経路 / Ctrl-A: AI 用コンテキストを写す / Ctrl-O: フレームを選んで開く' \
+      --preview "ERRNAV_COLOR=always $self --root $root show {1}" --preview-window='down,60%,wrap' \
+      --bind "enter:execute($self --root $root open {1} top < /dev/tty > /dev/tty)" \
+      --bind "ctrl-o:execute($self --root $root open {1} < /dev/tty > /dev/tty)" \
+      --bind "ctrl-t:execute(ERRNAV_COLOR=always $self --root $root tree {1} | less -R)" \
+      --bind "ctrl-a:execute-silent($self --root $root context {1} --copy)"
+    ;;
+
+  *) usage >&2; exit 2 ;;
+esac

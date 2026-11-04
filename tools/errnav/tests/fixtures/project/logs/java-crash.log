@@ -1,0 +1,5 @@
+Exception in thread "main" java.lang.IllegalStateException: wrap
+	at com.example.Main.main(Main.java:11)
+Caused by: java.lang.NullPointerException: Cannot invoke "String.trim()" because "<parameter1>" is null
+	at com.example.Main.name(Main.java:5)
+	at com.example.Main.main(Main.java:9)

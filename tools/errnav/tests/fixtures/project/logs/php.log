@@ -1,0 +1,6 @@
+PHP Fatal error:  Uncaught RuntimeException: User not found: 42 in /var/www/html/app/Services/UserService.php:6
+Stack trace:
+#0 /var/www/html/app/main.php(5): UserService->find()
+#1 /var/www/html/app/main.php(7): handle()
+#2 {main}
+  thrown in /var/www/html/app/Services/UserService.php on line 6
