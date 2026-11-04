@@ -20,7 +20,7 @@
 | セッションの始め方・終わり方・引き継ぎ | [`docs/AI_SESSION_GUIDE.md`](docs/AI_SESSION_GUIDE.md) |
 | いまの進み具合・次にやること | [`docs/PROGRESS.md`](docs/PROGRESS.md) |
 | 過去の設計判断 | [`docs/adr/`](docs/adr/README.md) |
-| 不具合の調べ方・再現の確かめ方 | [`tools/errnav/README.md`](tools/errnav/README.md)（`tools/errnav/bin/errnav show latest`・`context`・`repro`） |
+| 不具合の調べ方・再現の確かめ方 | [`tools/errnav/README.md`](tools/errnav/README.md)（`tools/errnav/bin/errnav show latest`・`context`・`repro`）。まず errnav を使い、取れないとき（知らない形のログ・エラーの出ない不具合）は自分で grep などで調べてよい |
 
 ## 1. プロジェクトの要約（3行）
 
