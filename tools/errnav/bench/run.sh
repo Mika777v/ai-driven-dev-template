@@ -15,7 +15,11 @@
 #   BENCH_BUGS         不具合のコミットがあるブランチ（既定: bench/errnav-bugs）
 #   BENCH_RUNS         1つのシナリオ・条件で何回動かすか（既定: 3）
 #   BENCH_ONLY         動かすシナリオを絞る（例: "B1 B3"）
-#   BENCH_CONDITIONS   動かす条件（既定: "without with"）
+#   BENCH_CONDITIONS   動かす条件（既定: "without with slim slim-skill"）
+#                        without    今の CLAUDE.md、errnav なし
+#                        with       今の CLAUDE.md + errnav の1行、errnav あり（指示文で使い方を伝える）
+#                        slim       短い CLAUDE.md（運用の詳細は docs/DEV_RULES.md に移す）、errnav なし
+#                        slim-skill 短い CLAUDE.md、errnav をスキルとしてだけ置く（指示文では伝えない）
 #   BENCH_MODEL        使うモデル（既定: Claude Code の既定。比べるときは固定する）
 #   BENCH_MAX_BUDGET   1回あたりの上限（ドル。既定: 2）
 #   BENCH_TIMEOUT      1回あたりの上限（秒。既定: 900。timeout コマンドがあるときだけ）
@@ -32,7 +36,7 @@ REPO="${BENCH_REPO:-https://github.com/Mika777v/routepense}"
 BASE="${BENCH_BASE:-main}"
 BUGS="${BENCH_BUGS:-bench/errnav-bugs}"
 RUNS="${BENCH_RUNS:-3}"
-CONDITIONS="${BENCH_CONDITIONS:-without with}"
+CONDITIONS="${BENCH_CONDITIONS:-without with slim slim-skill}"
 MAX_BUDGET="${BENCH_MAX_BUDGET:-2}"
 TIMEOUT_SEC="${BENCH_TIMEOUT:-900}"
 INSTALL="${BENCH_INSTALL:-npm ci --no-audit --no-fund}"
@@ -71,7 +75,7 @@ cmd_prepare() {
   rm -rf "$OUT/base"; mkdir -p "$OUT/base"
   git -C "$OUT/src" archive "origin/$BASE" | tar -x -C "$OUT/base" || die "展開に失敗しました"
   info "==> 依存を入れる: $INSTALL"
-  (cd "$OUT/base" && eval "$INSTALL") > "$OUT/install.log" 2>&1 || die "依存を入れられません（$OUT/install.log）"
+  (cd "$OUT/base" && eval "$INSTALL") < /dev/null > "$OUT/install.log" 2>&1 || die "依存を入れられません（$OUT/install.log）"
   local id prefix
   while IFS=$'\t' read -r id prefix _; do
     [ -n "$(bug_commit "$prefix")" ] || die "$id の不具合のコミット（件名「$prefix」）が $BUGS にありません"
@@ -79,6 +83,13 @@ cmd_prepare() {
 $(scenarios)
 EOF
   info "準備ができました: $OUT"
+}
+
+# errnav を作業場所に入れる。テストの材料（エラーの入ったログ）は持ち込まない。探索の邪魔になるため
+copy_errnav() {
+  mkdir -p "$1/tools/errnav"
+  cp -R "$ERRNAV_DIR/bin" "$ERRNAV_DIR/lib" "$ERRNAV_DIR/plugins" "$ERRNAV_DIR/README.md" "$ERRNAV_DIR/ARCHITECTURE.md" "$1/tools/errnav/"
+  printf '.errnav/cache/\n' >> "$1/.gitignore"
 }
 
 # ---- 作業場所（毎回まっさら。git の履歴に答えが残らないよう、履歴は1コミットだけにする） ---------------
@@ -90,13 +101,23 @@ make_workspace() {
   rm -rf "$ws"
   cp -R "$OUT/base" "$ws" || die "作業場所を作れません"
   git -C "$OUT/src" show "$sha" | (cd "$ws" && git apply) || die "$id の不具合を当てられません"
-  if [ "$cond" = with ]; then
-    mkdir -p "$ws/tools/errnav"
-    # テストの材料（エラーの入ったログ）は持ち込まない。探索の邪魔になるため
-    cp -R "$ERRNAV_DIR/bin" "$ERRNAV_DIR/lib" "$ERRNAV_DIR/plugins" "$ERRNAV_DIR/README.md" "$ERRNAV_DIR/ARCHITECTURE.md" "$ws/tools/errnav/"
-    printf '\n## 不具合の調べ方\n%s\n' "$CLAUDE_MD_LINE" >> "$ws/CLAUDE.md"
-    printf '.errnav/cache/\n' >> "$ws/.gitignore"
-  fi
+  case "$cond" in
+    with)
+      copy_errnav "$ws"
+      printf '\n## 不具合の調べ方\n%s\n' "$CLAUDE_MD_LINE" >> "$ws/CLAUDE.md"
+      ;;
+    slim|slim-skill)
+      # 今の CLAUDE.md は docs/DEV_RULES.md に移し、短い CLAUDE.md から案内する（情報は消さない）
+      mkdir -p "$ws/docs"
+      mv "$ws/CLAUDE.md" "$ws/docs/DEV_RULES.md"
+      cp "$HERE/fixtures/routepense-slim-CLAUDE.md" "$ws/CLAUDE.md"
+      if [ "$cond" = slim-skill ]; then
+        copy_errnav "$ws"
+        mkdir -p "$ws/.claude/skills/errnav"
+        cp "$ERRNAV_DIR/skill/SKILL.md" "$ws/.claude/skills/errnav/SKILL.md"
+      fi
+      ;;
+  esac
   (
     cd "$ws" && git init -q && git add -A &&
       git -c user.name=bench -c user.email=bench@example.invalid commit -q -m "snapshot"
@@ -112,7 +133,7 @@ cmd_dry() {
     ws="$OUT/ws-dry"
     make_workspace "$id" with "$ws"
     printf '== %s（%s）\n' "$id" "$kind"
-    (cd "$ws" && eval "$TEST_CMD") > "$OUT/dry-$id.out" 2>&1 && info "  !! テストが通ってしまいました（不具合が効いていない）"
+    (cd "$ws" && eval "$TEST_CMD") < /dev/null > "$OUT/dry-$id.out" 2>&1 && info "  !! テストが通ってしまいました（不具合が効いていない）"
     printf '  テストの失敗: %s\n' "$(grep -E '^ +Tests ' "$OUT/dry-$id.out" | head -n 1 | sed 's/^ *//')"
     printf '  正解: %s:%s-%s\n' "$file" "$lo" "$hi"
     (cd "$ws" && ERRNAV_COLOR=never tools/errnav/bin/errnav scan - < "$OUT/dry-$id.out" | sed -n '2,3p' | sed 's/^/  errnav: /')
@@ -143,12 +164,13 @@ cmd_run() {
         start=$(date +%s)
         # 調べるだけにする: 書き換えのツールとサブエージェント（呼び出しの回数が数えられなくなる）は使わせない
         # ユーザーの設定（フックなど）と MCP は読まない。条件をそろえるため
+        # 標準入力は /dev/null にする（claude が while の入力のシナリオの一覧を読んでしまい、次のシナリオが飛ばされるため）
         (cd "$ws" && "${to[@]}" claude -p "$prompt" --output-format stream-json --verbose \
-          --allowedTools "Bash" "Read" "Grep" "Glob" \
+          --allowedTools "Bash" "Read" "Grep" "Glob" "Skill" \
           --disallowedTools "Edit" "Write" "NotebookEdit" "Task" "Agent" "WebFetch" "WebSearch" \
           --setting-sources project,local --strict-mcp-config --no-session-persistence \
           --max-budget-usd "$MAX_BUDGET" ${BENCH_MODEL:+--model "$BENCH_MODEL"} \
-          > "$OUT/runs/$tag.jsonl" 2> "$OUT/runs/$tag.err")
+          < /dev/null > "$OUT/runs/$tag.jsonl" 2> "$OUT/runs/$tag.err")
         status=$?
         end=$(date +%s)
         printf '%s\t%s\t%s\n' "$status" "$((end - start))" "$(git -C "$ws" status --porcelain | grep -v '^?? .errnav/' | wc -l | tr -d ' ')" > "$OUT/runs/$tag.meta"
@@ -177,6 +199,7 @@ EOF
   meta=$(cat "${f%.jsonl}.meta" 2>/dev/null || printf '\t\t')
   jq -r --arg id "$id" --arg cond "$cond" --arg rep "$rep" --arg ok "$ok" --arg meta "$meta" --arg ans "$afile:$aline" -s '
     def tools: [ .[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | .name ];
+    def skills: [ .[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Skill") ] | length;
     (tools) as $t
     | (map(select(.type == "result")) | last // {}) as $r
     | ($meta | split("\t")) as $m
@@ -185,14 +208,14 @@ EOF
         ($t | map(select(. == "Grep")) | length), ($t | map(select(. == "Glob")) | length),
         ($r.num_turns // ""), ($r.usage.input_tokens // ""), ($r.usage.output_tokens // ""),
         ($r.usage.cache_creation_input_tokens // ""), ($r.usage.cache_read_input_tokens // ""),
-        ($r.total_cost_usd // ""), ((($r.duration_ms // 0) / 1000) | floor), ($m[0] // ""), ($m[2] // ""), $ans ]
+        ($r.total_cost_usd // ""), ((($r.duration_ms // 0) / 1000) | floor), ($m[0] // ""), ($m[2] // ""), $ans, skills ]
     | @tsv' "$f"
 }
 
 cmd_report() {
   local f rows="$OUT/results.tsv"
   ls "$OUT"/runs/*.jsonl >/dev/null 2>&1 || die "結果がありません（先に run）"
-  printf 'id\tcond\trep\tcorrect\ttools\tbash\tread\tgrep\tglob\tturns\tin\tout\tcache_create\tcache_read\tcost_usd\tsec\texit\tchanged\tanswer\n' > "$rows"
+  printf 'id\tcond\trep\tcorrect\ttools\tbash\tread\tgrep\tglob\tturns\tin\tout\tcache_create\tcache_read\tcost_usd\tsec\texit\tchanged\tanswer\tskill\n' > "$rows"
   for f in "$OUT"/runs/*.jsonl; do row_of "$f" >> "$rows"; done
   echo "1回ごと: $rows（correct: 2 = ファイルと行が合う / 1 = ファイルだけ合う / 0 = 外れ）"
   echo
@@ -202,9 +225,9 @@ cmd_report() {
     { k = $1 "\t" $2; n[k]++; ok[k] += ($4 == 2); fileok[k] += ($4 >= 1); t[k] += $5; tu[k] += $10
       tok[k] += $11 + $12 + $13 + $14; c[k] += $15; s[k] += $16; if (!(k in seen)) { seen[k] = 1; order[++m] = k } }
     END {
-      printf "%-4s %-8s %3s %9s %9s %7s %7s %10s %8s %6s\n", "id", "cond", "n", "正解(行)", "正解(file)", "ツール", "ターン", "トークン", "料金$", "秒"
+      printf "%-4s %-10s %3s %9s %9s %7s %7s %10s %8s %6s\n", "id", "cond", "n", "正解(行)", "正解(file)", "ツール", "ターン", "トークン", "料金$", "秒"
       for (i = 1; i <= m; i++) { k = order[i]; split(k, a, "\t")
-        printf "%-4s %-8s %3d %7d/%-2d %7d/%-2d %7.1f %7.1f %10.0f %8.3f %6.0f\n", a[1], a[2], n[k], ok[k], n[k], fileok[k], n[k], t[k]/n[k], tu[k]/n[k], tok[k]/n[k], c[k]/n[k], s[k]/n[k] }
+        printf "%-4s %-10s %3d %7d/%-2d %7d/%-2d %7.1f %7.1f %10.0f %8.3f %6.0f\n", a[1], a[2], n[k], ok[k], n[k], fileok[k], n[k], t[k]/n[k], tu[k]/n[k], tok[k]/n[k], c[k]/n[k], s[k]/n[k] }
     }' "$rows"
 }
 
