@@ -174,6 +174,8 @@ events.tsv                                                         frames.raw.ts
 
 移植性のために避けていること: 連想配列・`mapfile`・`${var,,}`・`set -u`（bash 3.2）、`sed -i`・`sed` の `I` フラグ・`readlink -f`・`stat`・`date -d`（BSD）、awk の `{n}` の繰り返しと `match()` の第3引数（mawk / BWK awk）。
 
+awk に正規表現を渡すときは `-v` を使わず環境変数（`ENVIRON`）で渡す。`-v` の値は文字列のエスケープとして処理され、gawk では `\[` の `\` が消えて正規表現が壊れる（mawk では残るので、手元では気づきにくい。GitHub Actions の Ubuntu は gawk）。
+
 ## 7. 今後の拡張の候補
 
 | 候補 | 内容 |
