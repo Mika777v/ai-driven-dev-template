@@ -17,6 +17,8 @@
 #   BENCH_CONDITIONS  条件（既定: "template minimal"）
 #                       template  土台の CLAUDE.md のまま（運用のルールの要点と「いつ何を読むか」）
 #                       minimal   CLAUDE.md を、説明・技術スタック・コマンドだけにする
+#                       bare      minimal に加えて、運用のルールの文書（DEV_RULES・GITHUB_WORKFLOW・PROGRESS・
+#                                 PR / Issue のテンプレート・pr-title.yml）も消す。「ルールが無い」状態
 #   BENCH_RUNS        1つの条件で何回動かすか（既定: 2）
 #   BENCH_MODEL       使うモデル（比べるときは固定する）
 #   BENCH_MAX_BUDGET  1回あたりの上限（ドル。既定: 5）
@@ -79,6 +81,12 @@ make_workspace() {
   case "$cond" in
     template) ;;
     minimal) cp "$HERE/fixtures/routepense-minimal-CLAUDE.md" "$ws/CLAUDE.md" ;;
+    bare)
+      # テンプレートが持ち込んだ運用のルールの文書も消す（プロジェクトの中身の文書・CI は残す）
+      cp "$HERE/fixtures/routepense-minimal-CLAUDE.md" "$ws/CLAUDE.md"
+      rm -rf "$ws/docs/DEV_RULES.md" "$ws/docs/GITHUB_WORKFLOW.md" "$ws/docs/PROGRESS.md" \
+        "$ws/.github/pull_request_template.md" "$ws/.github/ISSUE_TEMPLATE" "$ws/.github/workflows/pr-title.yml"
+      ;;
     *) die "知らない条件: $cond" ;;
   esac
   (
