@@ -51,8 +51,10 @@ for kv in $DOC_CHECKS; do
   out "touched_$name" "$(printf '%s\n' "$changed" | grep -q "^$prefix" && echo 1 || echo 0)"
 done
 
-# 既にあるマイグレーションを書き換えていないか（削った行があれば書き換えとみなす。閉じかっこの付け替えは除く）
-removed=$(git diff "$root" -- backend/src/db/migrations.ts | grep -E '^-[^-]' | grep -vE '^-\s*(\];|\},?)\s*$' | wc -l | tr -d ' ')
+# 既にあるマイグレーションの SQL を書き換えていないか（SQL の行を削っていたら書き換えとみなす）。
+# 型の宣言や閉じかっこの付け替えは数えない（SQL の言葉を含む行だけを見る）
+removed=$(git diff "$root" -- backend/src/db/migrations.ts | grep -E '^-[^-]' \
+  | grep -E '\b(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|CHECK|REFERENCES|PRIMARY|INDEX|TEXT|INTEGER|NOT NULL|UNIQUE)\b' | wc -l | tr -d ' ')
 out migration_rewritten "$([ "$removed" -gt 0 ] && echo 1 || echo 0)"
 
 # ---- PR -------------------------------------------------------------------------
