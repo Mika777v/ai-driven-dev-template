@@ -17,7 +17,8 @@ cd "$WS" || exit 2
 out() { printf '%s\t%s\n' "$1" "$2"; }
 yes() { if "$@" >/dev/null 2>&1; then echo 1; else echo 0; fi; }
 
-root=$(git rev-list --max-parents=0 HEAD | tail -n 1)
+# 作業の始まり。続きの Task では、前の作業のコミットの後（タグ bench-start）から数える
+root=$(git rev-parse -q --verify bench-start 2>/dev/null || git rev-list --max-parents=0 HEAD | tail -n 1)
 
 # ---- git ------------------------------------------------------------------------
 branch=$(git rev-parse --abbrev-ref HEAD)
@@ -58,20 +59,26 @@ out migration_rewritten "$([ "$removed" -gt 0 ] && echo 1 || echo 0)"
 title=$(head -n 1 PR_TITLE.txt 2>/dev/null)
 out pr_title "$title"
 out pr_title_ok "$(printf '%s' "$title" | grep -Eq "^($TYPES)(\(($SCOPES)\))?!?: .+" && echo 1 || echo 0)"
-if [ -f PR_BODY.md ]; then
+if [ -n "$LEFTOVER_RE" ]; then
+  # 直し漏れ: 作業の後も古い値が書いてあるファイルの数（受け入れテストを置く前。テストのファイルは除く）
+  out leftover_files "$(git grep -lE "$LEFTOVER_RE" -- backend shared frontend docs 2>/dev/null | grep -vE '\.test\.tsx?$' | wc -l | tr -d ' ')"
+fi
+if [ -n "$PR_SECTIONS" ] && [ -f PR_BODY.md ]; then
   miss=0
   IFS='|' read -r -a secs <<EOF
 $PR_SECTIONS
 EOF
   for s in "${secs[@]}"; do grep -qF -- "$s" PR_BODY.md || miss=$((miss + 1)); done
   out pr_sections_ok "$([ "$miss" -eq 0 ] && echo 1 || echo 0)"
-  # 「確認が必要な項目」の節の中身（次の見出しまで）で、申告すべきことに触れているか
-  confirm=$(awk '/^## 確認が必要な項目/ { on = 1; next } /^## / { on = 0 } on' PR_BODY.md | grep -v '^<!--')
-  out pr_confirm_declared "$(printf '%s' "$confirm" | grep -Eiq "$CONFIRM_RE" && echo 1 || echo 0)"
-  out pr_links_issue "$(grep -Eq '(Closes|Part of) #[0-9]+' PR_BODY.md && echo 1 || echo 0)"
-else
-  out pr_sections_ok 0; out pr_confirm_declared 0; out pr_links_issue 0
+elif [ -n "$PR_SECTIONS" ]; then
+  out pr_sections_ok 0
 fi
+if [ -n "$CONFIRM_RE" ]; then
+  # 「確認が必要な項目」の節の中身（次の見出しまで）で、申告すべきことに触れているか
+  confirm=$(awk '/^## 確認が必要な項目/ { on = 1; next } /^## / { on = 0 } on' PR_BODY.md 2>/dev/null | grep -v '^<!--')
+  out pr_confirm_declared "$(printf '%s' "$confirm" | grep -Eiq "$CONFIRM_RE" && echo 1 || echo 0)"
+fi
+out pr_links_issue "$(grep -Eq '(Closes|Part of) #[0-9]+' PR_BODY.md 2>/dev/null && echo 1 || echo 0)"
 
 # ---- 壊していないか（受け入れテストを置く前） ---------------------------------------------
 out typecheck_ok "$(yes npm run typecheck)"

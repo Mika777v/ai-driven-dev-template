@@ -43,6 +43,12 @@ INSTALL="${BENCH_INSTALL:-npm ci --no-audit --no-fund}"
 die() { printf 'bench: %s\n' "$*" >&2; exit 2; }
 info() { printf '%s\n' "$*" >&2; }
 [ -f "$TASK/task.md" ] || die "Task がありません: $TASK"
+# shellcheck disable=SC1091
+. "$TASK/config.sh"
+# 続きの Task は、条件の既定を from-<土台> にする
+if [ -n "$BASES" ] && [ -z "$BENCH_CONDITIONS" ]; then
+  CONDITIONS=""; for b in $BASES; do CONDITIONS="$CONDITIONS from-$b"; done
+fi
 
 # 両方の条件で同じ指示。運用のルールのことは書かない（CLAUDE.md から読むかを見るため）
 prompt() {
@@ -74,10 +80,9 @@ cmd_prepare() {
 }
 
 # ---- 作業場所（毎回まっさら。git の履歴は1コミットだけ） ------------------------------------------
-make_workspace() {
+# 条件ごとの手当て（CLAUDE.md の差し替え・ルールの文書を消す）
+treat() {
   local cond="$1" ws="$2"
-  rm -rf "$ws"
-  cp -R "$OUT/base" "$ws" || die "作業場所を作れません"
   case "$cond" in
     template) ;;
     minimal) cp "$HERE/fixtures/routepense-minimal-CLAUDE.md" "$ws/CLAUDE.md" ;;
@@ -89,17 +94,73 @@ make_workspace() {
       ;;
     *) die "知らない条件: $cond" ;;
   esac
+}
+
+make_workspace() {
+  local cond="$1" ws="$2"
+  rm -rf "$ws"
+  cp -R "$OUT/base" "$ws" || die "作業場所を作れません"
+  if [ -n "$BASES" ]; then
+    make_followup_workspace "$cond" "$ws"; return
+  fi
+  treat "$cond" "$ws"
   (
     cd "$ws" && git init -q -b main && git add -A &&
       git -c user.name=bench -c user.email=bench@example.invalid commit -q -m "snapshot" &&
+      git tag bench-start &&
       git config user.name "bench-agent" && git config user.email "agent@example.invalid"
   ) || die "git の初期化に失敗しました"
+}
+
+# 続きの Task の作業場所: 前の作業の結果を、スカッシュマージした後の main と同じ形で入れる。
+# 続きをやる AI の条件はそろえる（どちらも CLAUDE.md は最小限・ルールの文書なし）。違うのは前の作業が残した物だけ
+make_followup_workspace() {
+  local cond="$1" ws="$2" name treatment
+  name="${cond#from-}"
+  case " $BASES " in *" $name "*) ;; *) die "知らない条件: $cond（from-<${BASES// /|}>）" ;; esac
+  eval "treatment=\${BASE_TREATMENT_$name:-$name}"
+  treat "$treatment" "$ws"               # 前の作業をしたときの作業場所に戻す（diff がそれに対して作られているため）
+  treat bare "$ws"                       # 続きの条件をそろえる（ルールの文書と案内を外す）
+  [ "$name" = template ] && git -C "$OUT/src" show "$(base_ref):docs/PROGRESS.md" > "$ws/docs/PROGRESS.md" 2>/dev/null
+  (
+    cd "$ws" && git init -q -b main && git add -A &&
+      git -c user.name=bench -c user.email=bench@example.invalid commit -q -m "snapshot" &&
+      git apply "$TASK/bases/$name.diff" && git add -A &&
+      git -c user.name=bench -c user.email=bench@example.invalid commit -q -F - <<MSG &&
+$(cat "$TASK/bases/$name.pr_title.txt")
+
+$(cat "$TASK/bases/$name.pr_body.md")
+MSG
+      git tag bench-start &&
+      git config user.name "bench-agent" && git config user.email "agent@example.invalid"
+  ) || die "続きの作業場所を作れません（$name）"
+}
+
+base_ref() {
+  local ref="origin/$BASE"
+  git -C "$OUT/src" rev-parse -q --verify "$ref^{commit}" >/dev/null || ref="$BASE"
+  printf '%s\n' "$ref"
 }
 
 # ---- AI を動かさない確認 ---------------------------------------------------------------
 cmd_dry() {
   [ -d "$OUT/base" ] || die "先に prepare を実行してください"
-  local ws="$OUT/ws-dry"
+  local ws="$OUT/ws-dry" cond name
+  if [ -n "$BASES" ]; then
+    for cond in $CONDITIONS; do
+      name="${cond#from-}"
+      echo "== $cond: 何もしない場合（新しい要求の受け入れテストは落ちるはず）"
+      make_workspace "$cond" "$ws"
+      git -C "$ws" log --format='  前の作業: %s' -1
+      bash "$HERE/score.sh" "$ws" "$TASK" | grep -E '^(accept_|suite_ok|leftover_files)' | sed 's/^/  /'
+      if [ -f "$TASK/reference-from-$name.patch" ]; then
+        echo "== $cond: 正解の実装（reference-from-$name.patch）を当てた場合（受け入れテストは全部通るはず）"
+        (cd "$ws" && git apply "$TASK/reference-from-$name.patch") || die "正解の実装を当てられません"
+        bash "$HERE/score.sh" "$ws" "$TASK" | grep -E '^(accept_|leftover_files)' | sed 's/^/  /'
+      fi
+    done
+    rm -rf "$ws"; return
+  fi
   echo "== 何もしない場合（受け入れテストは落ちるはず）"
   make_workspace template "$ws"
   bash "$HERE/score.sh" "$ws" "$TASK" | grep -E '^(accept_|suite_ok|typecheck_ok|branch_ok|pr_title_ok)' | sed 's/^/  /'
@@ -145,7 +206,7 @@ cmd_run() {
       { printf 'exit\t%s\nsec_wall\t%s\n' "$status" "$((end - start))"
         bash "$HERE/score.sh" "$ws" "$TASK"; } > "$OUT/runs/$tag.score" 2> "$OUT/runs/$tag.score.err"
       # 差分を残してから作業場所を消す（後で人が読めるように）
-      (cd "$ws" && git diff "$(git rev-list --max-parents=0 HEAD | tail -n 1)" HEAD > "$OUT/runs/$tag.diff"
+      (cd "$ws" && git diff bench-start HEAD > "$OUT/runs/$tag.diff"
         cp PR_TITLE.txt "$OUT/runs/$tag.pr_title.txt" 2>/dev/null; cp PR_BODY.md "$OUT/runs/$tag.pr_body.md" 2>/dev/null)
       rm -rf "$ws"
     done

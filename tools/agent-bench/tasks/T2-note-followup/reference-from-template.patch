@@ -1,0 +1,90 @@
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index 2806b80..fb9c451 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -202,7 +202,7 @@ paths:
+       tags: [daily-records]
+       summary: その日のメモを付ける・直す・消す
+       description: |
+-        その日の記録が先に必要（無ければ 404）。前後の空白を除いて 200 文字まで。
++        その日の記録が先に必要（無ければ 404）。前後の空白を除いて 100 文字まで。
+         空（空白だけを含む）を送るとメモを消す。勤務区分と追加の移動は変えない
+       operationId: saveDailyRecordNote
+       requestBody:
+@@ -415,7 +415,7 @@ components:
+         searchUrl:
+           type: string
+           format: uri
+-          maxLength: 2000
++          maxLength: 1000
+           description: 経路結果のページの URL（任意。http:// か https://）。金額の計算には使わない
+     Route:
+       allOf:
+@@ -522,7 +522,7 @@ components:
+           items: { $ref: "#/components/schemas/ExtraTrip" }
+         note:
+           type: string
+-          maxLength: 200
++          maxLength: 100
+           description: その日のメモ（任意）。メモが無い日はプロパティごと無い
+     DailyRecordInput:
+       type: object
+@@ -535,7 +535,7 @@ components:
+       properties:
+         note:
+           type: string
+-          description: 前後の空白を除いて 200 文字まで。空（空白だけを含む）ならメモを消す
++          description: 前後の空白を除いて 100 文字まで。空（空白だけを含む）ならメモを消す
+           example: 健康診断で直帰
+ 
+     # shared/src/bulk.ts・bulk-apply.ts
+diff --git a/docs/requirements.md b/docs/requirements.md
+index f35f579..8d8ae9f 100644
+--- a/docs/requirements.md
++++ b/docs/requirements.md
+@@ -112,7 +112,7 @@
+ ### F8. 日のメモ
+ - その日の記録に、自由なメモを1つ付けられる（例: 「健康診断で直帰」「客先の住所が変わった」）。
+ - 日の編集パネルで入力し、「メモを保存」で保存する（勤務区分と違い、打ち終えてから保存する）。空にして保存するとメモを消す。
+-- 前後の空白を除いて 200 文字まで。
++- 前後の空白を除いて 100 文字まで。
+ - 記録のある日（在宅・出勤・休日）にだけ付けられる。未入力の日には、先に勤務区分を選ぶ。
+ - 勤務区分を変えても、一括設定で上書きしても、メモは残す。未入力に戻す（記録を消す）と、メモも消える。
+ - 一括設定の当てはめ中は、パネルでメモを見せるだけにする（当てはめ中は保存しないため）。
+@@ -178,7 +178,7 @@ type WorkStyle =
+ | date | string（YYYY-MM-DD） | 日付。ユーザーごとに1日1件 |
+ | workStyle | WorkStyle | 勤務区分 |
+ | extraTrips | ExtraTrip[] | 追加の移動（0件以上） |
+-| note | string（任意） | その日のメモ（F8）。前後の空白を除いて 200 文字まで。無い日は項目ごと無い |
++| note | string（任意） | その日のメモ（F8）。前後の空白を除いて 100 文字まで。無い日は項目ごと無い |
+ 
+ ### 追加の移動（ExtraTrip）
+ | 項目 | 型の想定 | 説明 |
+diff --git a/shared/src/csv.ts b/shared/src/csv.ts
+index c687345..5c9c0fd 100644
+--- a/shared/src/csv.ts
++++ b/shared/src/csv.ts
+@@ -88,6 +88,10 @@ function recordRows(record: CsvRecord): CsvRow[] {
+       note,
+     ]);
+   }
++  // 移動の無い日でも、メモがあれば種別「メモ」の1行を出す（金額などは空）
++  if (rows.length === 0 && note !== "") {
++    rows.push([...day, "メモ", "", "", "", "", "", "", "", "", note]);
++  }
+   return rows;
+ }
+ 
+diff --git a/shared/src/daily-record.ts b/shared/src/daily-record.ts
+index e16f91d..129b7a2 100644
+--- a/shared/src/daily-record.ts
++++ b/shared/src/daily-record.ts
+@@ -20,7 +20,7 @@ export type DailyRecordInput = {
+ };
+ 
+ /** メモの長さの上限（前後の空白を除いた文字数） */
+-export const NOTE_MAX_LENGTH = 200;
++export const NOTE_MAX_LENGTH = 100;
+ 
+ /** PUT /api/daily-records/:date/note の本文。空（空白だけを含む）を送るとメモを消す */
+ export type DailyRecordNoteInput = {

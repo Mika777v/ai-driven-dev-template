@@ -1,0 +1,1152 @@
+diff --git a/backend/src/daily-records/bulk-router.test.ts b/backend/src/daily-records/bulk-router.test.ts
+index 9099521..885d95a 100644
+--- a/backend/src/daily-records/bulk-router.test.ts
++++ b/backend/src/daily-records/bulk-router.test.ts
+@@ -197,6 +197,23 @@ describe("/api/daily-records/bulk", () => {
+       expect(await listNovember()).toEqual(saved);
+     });
+ 
++    it("既存の日のメモは残す", async () => {
++      await send("PUT", "/daily-records/2026-11-02", { workStyle: { kind: "remote" } });
++      await send("PUT", "/daily-records/2026-11-02/note", { note: "健康診断で直帰" });
++
++      const res = await send("POST", "/daily-records/bulk", {
++        days: [
++          { date: "2026-11-02", workStyle: { kind: "commute", routeId: route.id } },
++          { date: "2026-11-04", workStyle: { kind: "remote" } },
++        ],
++      });
++      expect(res.status).toBe(200);
++      const saved = (await res.json()) as DailyRecord[];
++      expect(saved[0]?.note).toBe("健康診断で直帰");
++      expect(saved[1]).not.toHaveProperty("note");
++      expect(await listNovember()).toEqual(saved);
++    });
++
+     it("登録されていないルートが1日でもあれば 400 で、どの日も保存しない", async () => {
+       const res = await send("POST", "/daily-records/bulk", {
+         days: [
+diff --git a/backend/src/daily-records/daily-record-repository.ts b/backend/src/daily-records/daily-record-repository.ts
+index 1e1947b..fd37ac5 100644
+--- a/backend/src/daily-records/daily-record-repository.ts
++++ b/backend/src/daily-records/daily-record-repository.ts
+@@ -25,6 +25,11 @@ export interface DailyRecordRepository {
+    * 保存した記録を日付の古い順に返す。
+    */
+   saveMany(userId: string, days: { date: DateString; workStyle: WorkStyle }[]): DailyRecord[];
++  /**
++   * その日の記録のメモを置き換える。note が undefined ならメモを消す。
++   * 勤務区分と追加の移動はそのまま。記録が無ければ undefined
++   */
++  saveNote(userId: string, date: DateString, note: string | undefined): DailyRecord | undefined;
+   /** その日の記録を消して「未入力」に戻す（追加の移動も消える）。消せたら true */
+   delete(userId: string, date: DateString): boolean;
+   /** その日の記録に追加の移動を足す。記録が無ければ undefined */
+diff --git a/backend/src/daily-records/daily-record-router.test.ts b/backend/src/daily-records/daily-record-router.test.ts
+index 504b474..52a5633 100644
+--- a/backend/src/daily-records/daily-record-router.test.ts
++++ b/backend/src/daily-records/daily-record-router.test.ts
+@@ -207,4 +207,73 @@ describe("/api/daily-records", () => {
+       expect((await send("DELETE", "/daily-records/2026-11-02/extra-trips/nope")).status).toBe(404);
+     });
+   });
++
++  describe("メモ", () => {
++    beforeEach(async () => {
++      await send("PUT", "/daily-records/2026-11-02", { workStyle: { kind: "remote" } });
++    });
++
++    async function putNote(note: unknown, date = "2026-11-02") {
++      return send("PUT", `/daily-records/${date}/note`, { note });
++    }
++
++    async function listNovember(): Promise<DailyRecord[]> {
++      return (await (await send("GET", "/daily-records?month=2026-11")).json()) as DailyRecord[];
++    }
++
++    it("付けると 200 でメモ付きの記録が返り、月の取得にも出る。直す・消すこともできる", async () => {
++      const res = await putNote("  健康診断で直帰  ");
++      expect(res.status).toBe(200);
++      const saved = (await res.json()) as DailyRecord;
++      expect(saved).toMatchObject({ date: "2026-11-02", workStyle: { kind: "remote" }, note: "健康診断で直帰" });
++      expect(await listNovember()).toEqual([saved]);
++
++      const fixed = (await (await putNote("客先の住所が変わった")).json()) as DailyRecord;
++      expect(fixed.note).toBe("客先の住所が変わった");
++
++      const cleared = (await (await putNote("   ")).json()) as DailyRecord;
++      expect(cleared).not.toHaveProperty("note");
++      expect((await listNovember())[0]).not.toHaveProperty("note");
++    });
++
++    it("勤務区分を保存し直しても、追加の移動を足してもメモは残る", async () => {
++      await putNote("健康診断で直帰");
++      const route = await createRoute();
++      const saved = (await (
++        await send("PUT", "/daily-records/2026-11-02", { workStyle: { kind: "commute", routeId: route.id } })
++      ).json()) as DailyRecord;
++      expect(saved.note).toBe("健康診断で直帰");
++
++      await send("POST", "/daily-records/2026-11-02/extra-trips", trip);
++      const [record] = await listNovember();
++      expect(record?.note).toBe("健康診断で直帰");
++      expect(record?.extraTrips).toHaveLength(1);
++    });
++
++    it("前後の空白を除いて200文字までは通り、201文字以上・文字列でないときは 400（field は note）", async () => {
++      expect((await putNote(` ${"あ".repeat(200)} `)).status).toBe(200);
++
++      const tooLong = await putNote("あ".repeat(201));
++      expect(tooLong.status).toBe(400);
++      expect(await fieldsOf(tooLong)).toEqual(["note"]);
++
++      for (const note of [123, null, { text: "メモ" }]) {
++        const res = await putNote(note);
++        expect(res.status).toBe(400);
++        expect(await fieldsOf(res)).toEqual(["note"]);
++      }
++      const missing = await send("PUT", "/daily-records/2026-11-02/note", {});
++      expect(missing.status).toBe(400);
++      expect(await fieldsOf(missing)).toEqual(["note"]);
++
++      // 誤りのときは、前のメモを変えない
++      expect((await listNovember())[0]?.note).toBe("あ".repeat(200));
++    });
++
++    it("記録が無い日は 404（空を送っても同じ）。実在しない日付は 400", async () => {
++      expect((await putNote("メモ", "2026-11-03")).status).toBe(404);
++      expect((await putNote("", "2026-11-03")).status).toBe(404);
++      expect((await putNote("メモ", "2026-02-30")).status).toBe(400);
++    });
++  });
+ });
+diff --git a/backend/src/daily-records/daily-record-router.ts b/backend/src/daily-records/daily-record-router.ts
+index cbb8c6d..5207325 100644
+--- a/backend/src/daily-records/daily-record-router.ts
++++ b/backend/src/daily-records/daily-record-router.ts
+@@ -12,7 +12,7 @@ import type { RouteRepository } from "../routes/route-repository";
+ import { isDateString, isMonthString } from "../validation/date";
+ import type { DailyRecordRepository } from "./daily-record-repository";
+ import { parseBulkPreviewRequest, parseBulkSaveRequest } from "./parse-bulk-input";
+-import { parseDailyRecordInput, parseExtraTripInput } from "./parse-daily-record-input";
++import { parseDailyRecordInput, parseExtraTripInput, parseNoteInput } from "./parse-daily-record-input";
+ import { resolveWorkStyle } from "./resolve-work-style";
+ 
+ const recordNotFound: ApiError = { error: "その日の記録が見つかりません" };
+@@ -31,7 +31,7 @@ const routeNotFound = "選んだルートが見つかりません";
+ 
+ /**
+  * /api/daily-records の API。
+- * 月の記録の取得、1日分の保存・削除、一括設定の下見と登録、追加の移動の追加・編集・削除
++ * 月の記録の取得、1日分の保存・削除、一括設定の下見と登録、メモの保存、追加の移動の追加・編集・削除
+  */
+ export function dailyRecordRouter(
+   records: DailyRecordRepository,
+@@ -129,6 +129,27 @@ export function dailyRecordRouter(
+     res.status(204).end();
+   });
+ 
++  // その日の記録のメモを付ける・直す・消す（空を送ると消す）。勤務区分と追加の移動はそのまま
++  router.put("/:date/note", (req, res) => {
++    const { date } = req.params;
++    if (!isDateString(date)) {
++      badRequest(res, invalidDate);
++      return;
++    }
++    const parsed = parseNoteInput(req.body);
++    if (!parsed.ok) {
++      badRequest(res, parsed.errors);
++      return;
++    }
++    const saved = records.saveNote(userId, date, parsed.value);
++    if (saved === undefined) {
++      res.status(404).json(recordNotFound);
++      return;
++    }
++    const body: DailyRecord = saved;
++    res.json(body);
++  });
++
+   router.post("/:date/extra-trips", (req, res) => {
+     const { date } = req.params;
+     if (!isDateString(date)) {
+diff --git a/backend/src/daily-records/parse-daily-record-input.test.ts b/backend/src/daily-records/parse-daily-record-input.test.ts
+index 8ed37c3..b0dd127 100644
+--- a/backend/src/daily-records/parse-daily-record-input.test.ts
++++ b/backend/src/daily-records/parse-daily-record-input.test.ts
+@@ -1,8 +1,36 @@
+ import { describe, expect, it } from "vitest";
+-import { parseExtraTripInput, parseWorkStyleInput } from "./parse-daily-record-input";
++import { parseExtraTripInput, parseNoteInput, parseWorkStyleInput } from "./parse-daily-record-input";
+ 
+ const trip = { from: "B駅", to: "C駅", transport: "bus", oneWayFare: 160, tripType: "oneWay" };
+ 
++describe("parseNoteInput", () => {
++  it("前後の空白を除いたメモを返す", () => {
++    expect(parseNoteInput({ note: "  健康診断で直帰 \n" })).toEqual({ ok: true, value: "健康診断で直帰" });
++  });
++
++  it("空・空白だけなら undefined（メモを消す）", () => {
++    expect(parseNoteInput({ note: "" })).toEqual({ ok: true, value: undefined });
++    expect(parseNoteInput({ note: " 　\t" })).toEqual({ ok: true, value: undefined });
++  });
++
++  it("前後の空白を除いて200文字までは通し、201文字は note のエラー", () => {
++    expect(parseNoteInput({ note: ` ${"あ".repeat(200)} ` })).toEqual({ ok: true, value: "あ".repeat(200) });
++    const tooLong = parseNoteInput({ note: "あ".repeat(201) });
++    expect(tooLong.ok ? [] : tooLong.errors.map((e) => e.field)).toEqual(["note"]);
++  });
++
++  it("文字列でない・無いときは note のエラー", () => {
++    for (const body of [{ note: 1 }, { note: null }, { note: ["a"] }, {}]) {
++      const result = parseNoteInput(body);
++      expect(result.ok ? [] : result.errors.map((e) => e.field)).toEqual(["note"]);
++    }
++  });
++
++  it("本文がオブジェクトでなければエラー", () => {
++    expect(parseNoteInput("メモ").ok).toBe(false);
++  });
++});
++
+ describe("parseWorkStyleInput", () => {
+   it("在宅・休日・出勤を受け取れる。出勤の余計な項目は捨てる", () => {
+     expect(parseWorkStyleInput({ kind: "remote" })).toEqual({ ok: true, value: { kind: "remote" } });
+diff --git a/backend/src/daily-records/parse-daily-record-input.ts b/backend/src/daily-records/parse-daily-record-input.ts
+index 8f655ac..19832c6 100644
+--- a/backend/src/daily-records/parse-daily-record-input.ts
++++ b/backend/src/daily-records/parse-daily-record-input.ts
+@@ -1,8 +1,9 @@
+-import type {
+-  ExtraTripInput,
+-  FieldError,
+-  TripType,
+-  WorkStyleInput,
++import {
++  MAX_NOTE,
++  type ExtraTripInput,
++  type FieldError,
++  type TripType,
++  type WorkStyleInput,
+ } from "@routepense/shared";
+ import { fare, isRecord, optionalText, text, transport } from "../validation/fields";
+ import type { Result } from "../validation/result";
+@@ -45,6 +46,25 @@ export function parseDailyRecordInput(body: unknown): Result<WorkStyleInput> {
+   return parseWorkStyleInput(body.workStyle);
+ }
+ 
++/**
++ * PUT /api/daily-records/:date/note の本文 { note } を確かめる。
++ * 前後の空白を除いて MAX_NOTE 文字まで。空（空白だけを含む）なら undefined（メモを消す）
++ */
++export function parseNoteInput(body: unknown): Result<string | undefined> {
++  if (!isRecord(body)) {
++    return { ok: false, errors: notObject };
++  }
++  const note = body.note;
++  if (typeof note !== "string") {
++    return { ok: false, errors: [{ field: "note", message: "メモは文字で入力してください" }] };
++  }
++  const trimmed = note.trim();
++  if (trimmed.length > MAX_NOTE) {
++    return { ok: false, errors: [{ field: "note", message: `メモは${MAX_NOTE}文字以内で入力してください` }] };
++  }
++  return { ok: true, value: trimmed === "" ? undefined : trimmed };
++}
++
+ function isTripType(value: unknown): value is TripType {
+   return value === "oneWay" || value === "roundTrip";
+ }
+diff --git a/backend/src/daily-records/sqlite-daily-record-repository.test.ts b/backend/src/daily-records/sqlite-daily-record-repository.test.ts
+index 419dd1d..c939652 100644
+--- a/backend/src/daily-records/sqlite-daily-record-repository.test.ts
++++ b/backend/src/daily-records/sqlite-daily-record-repository.test.ts
+@@ -171,6 +171,35 @@ describe("SqliteDailyRecordRepository", () => {
+     expect(repo.get("user-1", "2026-11-02")?.extraTrips).toEqual([added]);
+   });
+ 
++  it("メモを付ける・直す・消すことができる。メモが無ければプロパティも無い", () => {
++    const saved = repo.saveWorkStyle("user-1", "2026-11-02", commute);
++    expect(saved).not.toHaveProperty("note");
++
++    expect(repo.saveNote("user-1", "2026-11-02", "健康診断で直帰")).toEqual({ ...saved, note: "健康診断で直帰" });
++    expect(repo.saveNote("user-1", "2026-11-02", "客先の住所が変わった")?.note).toBe("客先の住所が変わった");
++    expect(repo.listByMonth("user-1", "2026-11")[0]?.note).toBe("客先の住所が変わった");
++
++    const cleared = repo.saveNote("user-1", "2026-11-02", undefined);
++    expect(cleared).toEqual(saved);
++    expect(cleared).not.toHaveProperty("note");
++  });
++
++  it("記録が無い日・ほかのユーザーの日には、メモを付けられない", () => {
++    repo.saveWorkStyle("user-1", "2026-11-02", commute);
++    expect(repo.saveNote("user-1", "2026-11-03", "メモ")).toBeUndefined();
++    expect(repo.saveNote("user-2", "2026-11-02", "メモ")).toBeUndefined();
++    expect(repo.get("user-1", "2026-11-02")).not.toHaveProperty("note");
++  });
++
++  it("勤務区分を保存し直しても、まとめて保存しても、メモは残る", () => {
++    repo.saveWorkStyle("user-1", "2026-11-02", commute);
++    repo.saveNote("user-1", "2026-11-02", "健康診断で直帰");
++    expect(repo.saveWorkStyle("user-1", "2026-11-02", { kind: "remote" }).note).toBe("健康診断で直帰");
++    expect(repo.saveMany("user-1", [{ date: "2026-11-02", workStyle: { kind: "holiday" } }])[0]?.note).toBe(
++      "健康診断で直帰",
++    );
++  });
++
+   it("まとめて保存すると、日付の古い順に返り、既存の日の追加の移動は残る", () => {
+     repo.saveWorkStyle("user-1", "2026-11-03", { kind: "remote" });
+     const added = repo.addExtraTrip("user-1", "2026-11-03", trip);
+diff --git a/backend/src/daily-records/sqlite-daily-record-repository.ts b/backend/src/daily-records/sqlite-daily-record-repository.ts
+index a568beb..d77c9e5 100644
+--- a/backend/src/daily-records/sqlite-daily-record-repository.ts
++++ b/backend/src/daily-records/sqlite-daily-record-repository.ts
+@@ -25,6 +25,7 @@ type DailyRecordRow = {
+   route_to: string | null;
+   route_transport: Transport | null;
+   route_one_way_fare: number | null;
++  note: string | null;
+ };
+ 
+ /** extra_trips テーブルの1行 */
+@@ -42,6 +43,8 @@ type ExtraTripRow = {
+ 
+ const RECORD_COLUMNS =
+   "id, user_id, date, work_kind, route_id, route_name, route_from, route_to, route_transport, route_one_way_fare";
++/** 読み出すときの列。メモは勤務区分の保存（INSERT）では書かないので、RECORD_COLUMNS とは分ける */
++const RECORD_SELECT_COLUMNS = `${RECORD_COLUMNS}, note`;
+ const TRIP_COLUMNS =
+   "id, daily_record_id, from_place, to_place, transport, one_way_fare, trip_type, purpose, source_route_id";
+ 
+@@ -117,7 +120,7 @@ export class SqliteDailyRecordRepository implements DailyRecordRepository {
+     // "2026-11" なら "2026-11-01" 〜 "2026-11-31"。YYYY-MM-DD は文字列のまま大小を比べられる
+     const rows = this.db
+       .prepare(
+-        `SELECT ${RECORD_COLUMNS} FROM daily_records
++        `SELECT ${RECORD_SELECT_COLUMNS} FROM daily_records
+          WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date`,
+       )
+       .all(userId, `${month}-01`, `${month}-31`) as DailyRecordRow[];
+@@ -126,14 +129,14 @@ export class SqliteDailyRecordRepository implements DailyRecordRepository {
+ 
+   get(userId: string, date: DateString): DailyRecord | undefined {
+     const row = this.db
+-      .prepare(`SELECT ${RECORD_COLUMNS} FROM daily_records WHERE user_id = ? AND date = ?`)
++      .prepare(`SELECT ${RECORD_SELECT_COLUMNS} FROM daily_records WHERE user_id = ? AND date = ?`)
+       .get(userId, date) as DailyRecordRow | undefined;
+     return row ? this.withExtraTrips([row])[0] : undefined;
+   }
+ 
+   saveWorkStyle(userId: string, date: DateString, workStyle: WorkStyle): DailyRecord {
+     const at = this.now().toISOString();
+-    // 同じユーザー・同じ日の行があれば、勤務区分の列だけを書き換える（UPSERT）
++    // 同じユーザー・同じ日の行があれば、勤務区分の列だけを書き換える（UPSERT）。メモの列には触れないので残る
+     this.db
+       .prepare(
+         `INSERT INTO daily_records (${RECORD_COLUMNS}, created_at, updated_at)
+@@ -169,6 +172,13 @@ export class SqliteDailyRecordRepository implements DailyRecordRepository {
+     }
+   }
+ 
++  saveNote(userId: string, date: DateString, note: string | undefined): DailyRecord | undefined {
++    const result = this.db
++      .prepare("UPDATE daily_records SET note = ?, updated_at = ? WHERE user_id = ? AND date = ?")
++      .run(note ?? null, this.now().toISOString(), userId, date);
++    return result.changes > 0 ? this.get(userId, date) : undefined;
++  }
++
+   delete(userId: string, date: DateString): boolean {
+     // 追加の移動は、外部キーの ON DELETE CASCADE で一緒に消える
+     const result = this.db
+@@ -271,6 +281,8 @@ export class SqliteDailyRecordRepository implements DailyRecordRepository {
+       date: row.date,
+       workStyle: toWorkStyle(row),
+       extraTrips: tripsByRecord.get(row.id) ?? [],
++      // メモが無い日は、プロパティごと付けない
++      ...(row.note !== null && { note: row.note }),
+     }));
+   }
+ }
+diff --git a/backend/src/db/migrations.ts b/backend/src/db/migrations.ts
+index 9d0d29b..63f621b 100644
+--- a/backend/src/db/migrations.ts
++++ b/backend/src/db/migrations.ts
+@@ -76,4 +76,11 @@ export const migrations: readonly { version: number; sql: string }[] = [
+       ALTER TABLE routes ADD COLUMN search_url TEXT;
+     `,
+   },
++  {
++    version: 4,
++    sql: `
++      -- 日次記録の自由なメモ（任意）。今までの記録は NULL（メモなし）のまま読める
++      ALTER TABLE daily_records ADD COLUMN note TEXT;
++    `,
++  },
+ ];
+diff --git a/backend/src/openapi.test.ts b/backend/src/openapi.test.ts
+index 3bcd0a0..6584129 100644
+--- a/backend/src/openapi.test.ts
++++ b/backend/src/openapi.test.ts
+@@ -61,8 +61,8 @@ describe("docs/api/openapi.yaml と backend の API の一致", () => {
+     expect(mounted).toHaveLength(apiRouters(deps).length);
+   });
+ 
+-  it("一覧の作り方の確かめ: 15 個の API がある", () => {
+-    expect(implementedEndpoints()).toHaveLength(15);
++  it("一覧の作り方の確かめ: 16 個の API がある", () => {
++    expect(implementedEndpoints()).toHaveLength(16);
+     expect(implementedEndpoints()).toContain("DELETE /api/daily-records/{date}/extra-trips/{tripId}");
+   });
+ });
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index dfe3a6f..214ae6f 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -149,7 +149,7 @@ paths:
+     post:
+       tags: [daily-records]
+       summary: 一括設定の登録
+-      description: カレンダーで直した後の、日ごとの勤務区分をまとめて保存する。すでに記録がある日は、勤務区分だけを置き換える
++      description: カレンダーで直した後の、日ごとの勤務区分をまとめて保存する。すでに記録がある日は、勤務区分だけを置き換える（追加の移動とメモは残る）
+       operationId: saveBulk
+       requestBody:
+         required: true
+@@ -172,7 +172,7 @@ paths:
+     put:
+       tags: [daily-records]
+       summary: その日の勤務区分を保存する
+-      description: 記録が無ければ作り、あれば勤務区分だけを置き換える（追加の移動は残る）
++      description: 記録が無ければ作り、あれば勤務区分だけを置き換える（追加の移動とメモは残る）
+       operationId: saveDailyRecord
+       requestBody:
+         required: true
+@@ -195,6 +195,30 @@ paths:
+         "400": { $ref: "#/components/responses/BadRequest" }
+         "404": { $ref: "#/components/responses/NotFound" }
+ 
++  /api/daily-records/{date}/note:
++    parameters:
++      - $ref: "#/components/parameters/Date"
++    put:
++      tags: [daily-records]
++      summary: その日の記録にメモを付ける・直す・消す
++      description: >-
++        その日の記録が先に必要（無ければ 404）。前後の空白を除いて保存し、空（空白だけを含む）を送るとメモを消す。
++        勤務区分と追加の移動は変えない
++      operationId: saveDailyRecordNote
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema: { $ref: "#/components/schemas/DailyRecordNoteInput" }
++      responses:
++        "200":
++          description: メモを付けた後の記録（メモを消したときは note が無い）
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/DailyRecord" }
++        "400": { $ref: "#/components/responses/BadRequest" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
+   /api/daily-records/{date}/extra-trips:
+     parameters:
+       - $ref: "#/components/parameters/Date"
+@@ -496,11 +520,24 @@ components:
+           type: array
+           description: 追加の移動（足した順）
+           items: { $ref: "#/components/schemas/ExtraTrip" }
++        note:
++          type: string
++          maxLength: 200
++          description: その日の自由なメモ。メモが無い日は、プロパティごと付けない
++          example: 健康診断で直帰
+     DailyRecordInput:
+       type: object
+       required: [workStyle]
+       properties:
+         workStyle: { $ref: "#/components/schemas/WorkStyleInput" }
++    DailyRecordNoteInput:
++      type: object
++      required: [note]
++      properties:
++        note:
++          type: string
++          description: 前後の空白を除いて200文字まで。空（空白だけを含む）ならメモを消す
++          example: 健康診断で直帰
+ 
+     # shared/src/bulk.ts・bulk-apply.ts
+     BulkPreviewRequest:
+diff --git a/docs/requirements.md b/docs/requirements.md
+index b4986f2..08cd2c2 100644
+--- a/docs/requirements.md
++++ b/docs/requirements.md
+@@ -1,7 +1,7 @@
+ # routepense 要件定義
+ 
+ - 作成日: 2026-11-02
+-- 更新日: 2026-11-04（CSV 出力 F7・U10 を追加）
++- 更新日: 2026-11-05（日のメモ F2・U11 を追加）
+ - 状態: MVP の要件（確定）
+ - 前提: リポジトリ直下の `CLAUDE.md`（技術スタック・設計方針）
+ 
+@@ -43,6 +43,9 @@
+ - 何も選んでいない日（日次記録が無い日）は「**未入力**」と表示し、休日とは区別する。
+ - 1日に使う通常ルートは1つだけ。
+ - 日の記録を消して「未入力」に戻すこともできる。
++- 日の記録に、自由なメモを付けられる（例: 「健康診断で直帰」「客先の住所が変わった」）。前後の空白を除いて200文字まで。日の編集パネルの「メモを保存」で保存し、空にして保存すると消える。
++  - 記録の無い（未入力の）日には付けられない。先に勤務区分を選ぶ。
++  - 勤務区分の保存・一括設定の登録では、メモは消さずに残す。
+ 
+ ### F3. 一括設定（docs/DEV_RULES.md「作る機能」の「一括登録」）
+ - カレンダー画面の中にある「一括設定」ボタンから開く。
+@@ -71,7 +74,7 @@
+ ### F5. 月ごとの表示
+ - カレンダー表示と表表示を、同じ画面で切り替えられる。
+ - 表示する項目: 日付、勤務区分（在宅 / 出勤＋ルート名 / 休日 / 未入力）、交通費（通常ルート＋追加の移動の合計）。
+-- 表表示では、追加の移動の内訳（区間・片道/往復・金額・目的）も確認できる。
++- 表表示では、追加の移動の内訳（区間・片道/往復・金額・目的）と、日のメモも確認できる。
+ - 月の交通費の合計を表示する。
+ - 祝日は、カレンダーのマスと表の日付の横に祝日名（例: 文化の日）を表示する。勤務区分は変えない（祝日の記録も、ほかの日と同じに表示する）。
+ 
+@@ -101,6 +104,7 @@
+ | 金額 | 片道運賃、往復なら × 2 | 640 |
+ | ルート名 | 通常は記録した時点のルート名。追加は空（追加の移動はルート名を持たないため） | 自宅↔本社 |
+ | 目的 | 追加の移動の目的・メモ（通常は空） | 客先B打合せ |
++| メモ | 日のメモ（F2）。その日の行のすべてに同じメモを入れる。メモが無ければ空 | 健康診断で直帰 |
+ 
+ - 金額の列の和は、月次画面の月の合計（F5）と必ず一致する。合計の行は CSV に入れない（表計算ソフトで足せるため。転記のときに明細と混ざらないように）。
+ - 文字コードは UTF-8（BOM 付き）、改行は CRLF。値にカンマ・改行・`"` があれば `"` で囲む（RFC 4180）。
+@@ -168,6 +172,7 @@ type WorkStyle =
+ | date | string（YYYY-MM-DD） | 日付。ユーザーごとに1日1件 |
+ | workStyle | WorkStyle | 勤務区分 |
+ | extraTrips | ExtraTrip[] | 追加の移動（0件以上） |
++| note | string（任意） | 日のメモ（前後の空白を除いて200文字まで）。無い日はプロパティごと付けない |
+ 
+ ### 追加の移動（ExtraTrip）
+ | 項目 | 型の想定 | 説明 |
+@@ -236,3 +241,4 @@ type WorkStyle =
+ | U1 | 有料の API は使わない。運賃は手で入れたまま、駅すぱあと API のフリープランで経路結果のページの URL をルートに付けられるようにする。経路検索は backend のインターフェースの後ろに置き、後から運賃も返す API に替えられるようにする（F1・ADR-0002） | 2026-11-02 |
+ | U9 | 祝日の一覧を `shared/` に定数で持つ（年ごとに手で更新）。一括設定には「祝日を除く」のチェック（最初から ON）を置き、除いた日の記録は今のまま残す。カレンダーと表に祝日名を表示する（F3・F5・F6） | 2026-11-02 |
+ | U10 | CSV 出力を足す（F7）。1行 = 1つの移動の明細で、移動の無い日（在宅・休日で追加の移動が無い日、未入力の日）は行を作らない。UTF-8（BOM 付き）・CRLF。CSV の文字列は `shared/` の純粋関数で作り、画面でファイルにする（API は足さない）。当てはめ中は保存できず、未入力の日は入らない | 2026-11-04 |
++| U11 | 日次記録に自由なメモ（`note`）を足す（F2）。`PUT /api/daily-records/{date}/note` で付ける・直す・消す（空を送ると消す）。勤務区分の保存・一括設定の登録では残す。CSV は最後の列「メモ」に、その日の行のすべてへ同じメモを入れる（移動の無い日は、メモがあっても行を作らない）。表表示にもメモの列を出す | 2026-11-05 |
+diff --git a/frontend/src/calendar/DayNote.tsx b/frontend/src/calendar/DayNote.tsx
+new file mode 100644
+index 0000000..6a03c23
+--- /dev/null
++++ b/frontend/src/calendar/DayNote.tsx
+@@ -0,0 +1,82 @@
++import type { DailyRecord } from "@routepense/shared";
++import { useState, type FormEvent } from "react";
++import { saveDailyRecordNote } from "./daily-records-api";
++import { errorMessage } from "./day-edit";
++import { isNoteChanged, normalizeNote, noteCount, noteLengthError } from "./day-note";
++
++type Props = {
++  /** その日の記録（メモは、記録のある日にだけ付けられる） */
++  record: DailyRecord;
++  /** メモを保存した後の記録。親が一覧を置き換える */
++  onChange: (record: DailyRecord) => void;
++};
++
++/**
++ * 日の編集パネルの中の「メモ」。勤務区分と違い、書きかけで保存されないよう「保存」ボタンで保存する。
++ * 空にして保存すると、メモを消す。
++ */
++export function DayNote({ record, onChange }: Props) {
++  const [value, setValue] = useState(record.note ?? "");
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++  const [saved, setSaved] = useState<string | null>(null);
++
++  const lengthError = noteLengthError(value);
++  const changed = isNoteChanged(value, record);
++
++  async function handleSubmit(e: FormEvent) {
++    e.preventDefault();
++    if (saving || !changed || lengthError) return;
++    setSaving(true);
++    setError(null);
++    setSaved(null);
++    const result = await saveDailyRecordNote(record.date, value);
++    setSaving(false);
++    if (!result.ok) {
++      setError(errorMessage(result.error));
++      return;
++    }
++    // 保存した値（前後の空白を除いたもの）に、欄をそろえる
++    setValue(result.value.note ?? "");
++    setSaved(result.value.note === undefined ? "メモを消しました" : "メモを保存しました");
++    onChange(result.value);
++  }
++
++  const invalid = lengthError !== null;
++
++  return (
++    <form className="day-note" aria-labelledby="day-note-heading" onSubmit={(e) => void handleSubmit(e)}>
++      <h4 id="day-note-heading">
++        <label htmlFor="day-note-input">メモ</label>
++      </h4>
++      <textarea
++        id="day-note-input"
++        rows={2}
++        value={value}
++        placeholder="健康診断で直帰"
++        onChange={(e) => {
++          setValue(e.target.value);
++          setSaved(null);
++        }}
++        aria-invalid={invalid || undefined}
++        aria-describedby="day-note-count"
++      />
++      <p id="day-note-count" className={invalid ? "day-note-count field-error" : "day-note-count"}>
++        {lengthError ?? noteCount(value)}
++      </p>
++      <div className="day-note-actions">
++        <button type="submit" disabled={saving || !changed || invalid}>
++          {saving ? "保存しています…" : normalizeNote(value) === "" && record.note !== undefined ? "メモを消す" : "メモを保存"}
++        </button>
++        <span className="muted" role="status">
++          {saved}
++        </span>
++      </div>
++      {error && (
++        <p className="form-alert" role="alert">
++          {error}
++        </p>
++      )}
++    </form>
++  );
++}
+diff --git a/frontend/src/calendar/DayPanel.tsx b/frontend/src/calendar/DayPanel.tsx
+index e69695b..54e2e41 100644
+--- a/frontend/src/calendar/DayPanel.tsx
++++ b/frontend/src/calendar/DayPanel.tsx
+@@ -9,6 +9,7 @@ import {
+ import { useEffect, useRef, useState } from "react";
+ import { formatYen } from "../routes/route-form";
+ import { deleteDailyRecord, saveDailyRecord } from "./daily-records-api";
++import { DayNote } from "./DayNote";
+ import { ExtraTrips } from "./ExtraTrips";
+ import { choiceOf, dayLabel, errorMessage, isSameChoice, toWorkStyleInput, type DayChoice } from "./day-edit";
+ 
+@@ -20,7 +21,7 @@ type Props = {
+   /** その日の記録。無ければ未入力 */
+   record: DailyRecord | undefined;
+   routes: RoutesState;
+-  /** 保存できたとき（勤務区分・追加の移動）。親が一覧を新しい記録に置き換える */
++  /** 保存できたとき（勤務区分・メモ・追加の移動）。親が一覧を新しい記録に置き換える */
+   onSaved: (record: DailyRecord) => void;
+   /** 未入力に戻せたとき */
+   onCleared: (date: DateString) => void;
+@@ -171,18 +172,27 @@ export function DayPanel({ date, record, routes, onSaved, onCleared, onClose, dr
+       )}
+ 
+       {draft ? (
+-        // 当てはめ中は勤務区分だけを扱う。追加の移動は、登録の後に足す・直す
+-        record &&
+-        record.extraTrips.length > 0 && (
+-          <p className="muted day-panel-note">
+-            追加の移動: {record.extraTrips.length}件（
+-            {formatYen(record.extraTrips.reduce((sum, trip) => sum + extraTripFare(trip), 0))}）。登録しても残ります
+-          </p>
++        // 当てはめ中は勤務区分だけを扱う。メモと追加の移動は、登録の後に直す
++        record && (
++          <>
++            {record.note !== undefined && (
++              <p className="muted day-panel-note">メモ: {record.note}（登録しても残ります）</p>
++            )}
++            {record.extraTrips.length > 0 && (
++              <p className="muted day-panel-note">
++                追加の移動: {record.extraTrips.length}件（
++                {formatYen(record.extraTrips.reduce((sum, trip) => sum + extraTripFare(trip), 0))}）。登録しても残ります
++              </p>
++            )}
++          </>
+         )
+       ) : record ? (
+-        routes.kind === "ok" && <ExtraTrips record={record} routes={routes.routes} onChange={onSaved} />
++        <>
++          <DayNote record={record} onChange={onSaved} />
++          {routes.kind === "ok" && <ExtraTrips record={record} routes={routes.routes} onChange={onSaved} />}
++        </>
+       ) : (
+-        <p className="muted day-panel-note">追加の移動は、先に勤務区分を選んでから足せます。</p>
++        <p className="muted day-panel-note">メモと追加の移動は、先に勤務区分を選んでから付けられます。</p>
+       )}
+     </section>
+   );
+diff --git a/frontend/src/calendar/MonthTable.tsx b/frontend/src/calendar/MonthTable.tsx
+index 2af75fa..4f90505 100644
+--- a/frontend/src/calendar/MonthTable.tsx
++++ b/frontend/src/calendar/MonthTable.tsx
+@@ -37,7 +37,7 @@ function TripList({ row }: { row: TableRow }) {
+ }
+ 
+ /**
+- * 月の表表示。1日を1行にし、追加の移動の内訳まで並べる。
++ * 月の表表示。1日を1行にし、追加の移動の内訳とメモまで並べる。
+  * 日付はボタンになっていて、押すとカレンダーと同じく日の編集パネルが開く。
+  */
+ export function MonthTable({ rows, caption, fare, selectedDate, onSelect }: Props) {
+@@ -55,6 +55,7 @@ export function MonthTable({ rows, caption, fare, selectedDate, onSelect }: Prop
+           <th scope="col" className="is-number">
+             交通費
+           </th>
++          <th scope="col">メモ</th>
+         </tr>
+       </thead>
+       <tbody>
+@@ -88,6 +89,7 @@ export function MonthTable({ rows, caption, fare, selectedDate, onSelect }: Prop
+               <TripList row={row} />
+             </td>
+             <td className="is-number table-fare">{yenOrDash(row.fare)}</td>
++            <td className="table-note">{row.note ?? ""}</td>
+           </tr>
+         ))}
+       </tbody>
+@@ -99,6 +101,7 @@ export function MonthTable({ rows, caption, fare, selectedDate, onSelect }: Prop
+           <td className="is-number">{formatYen(fare.workStyleTotal)}</td>
+           <td className="is-number">{formatYen(fare.extraTotal)}</td>
+           <td className="is-number table-fare">{formatYen(fare.total)}</td>
++          <td />
+         </tr>
+       </tfoot>
+     </table>
+diff --git a/frontend/src/calendar/daily-records-api.test.ts b/frontend/src/calendar/daily-records-api.test.ts
+index aadf210..bf03ce3 100644
+--- a/frontend/src/calendar/daily-records-api.test.ts
++++ b/frontend/src/calendar/daily-records-api.test.ts
+@@ -1,5 +1,12 @@
+ import { afterEach, describe, expect, it, vi } from "vitest";
+-import { deleteDailyRecord, listDailyRecords, previewBulk, saveBulk, saveDailyRecord } from "./daily-records-api";
++import {
++  deleteDailyRecord,
++  listDailyRecords,
++  previewBulk,
++  saveBulk,
++  saveDailyRecord,
++  saveDailyRecordNote,
++} from "./daily-records-api";
+ 
+ afterEach(() => {
+   vi.unstubAllGlobals();
+@@ -32,6 +39,17 @@ describe("daily-records-api: 1日分の保存と削除", () => {
+     );
+   });
+ 
++  it("メモ: PUT /note で { note } を送り、メモを付けた後の記録を返す", async () => {
++    const saved = { date: "2026-11-02", note: "健康診断で直帰" };
++    const fake = vi.fn(async () => new Response(JSON.stringify(saved), { status: 200 }));
++    vi.stubGlobal("fetch", fake);
++    expect(await saveDailyRecordNote("2026-11-02", "健康診断で直帰")).toEqual({ ok: true, value: saved });
++    expect(fake).toHaveBeenCalledWith(
++      "/api/daily-records/2026-11-02/note",
++      expect.objectContaining({ method: "PUT", body: JSON.stringify({ note: "健康診断で直帰" }) }),
++    );
++  });
++
+   it("未入力に戻す: DELETE の 204 を本文なしの成功として返す", async () => {
+     const fake = vi.fn(async () => new Response(null, { status: 204 }));
+     vi.stubGlobal("fetch", fake);
+diff --git a/frontend/src/calendar/daily-records-api.ts b/frontend/src/calendar/daily-records-api.ts
+index ccd7512..864024a 100644
+--- a/frontend/src/calendar/daily-records-api.ts
++++ b/frontend/src/calendar/daily-records-api.ts
+@@ -4,6 +4,7 @@ import type {
+   BulkSaveRequest,
+   DailyRecord,
+   DailyRecordInput,
++  DailyRecordNoteInput,
+   DateString,
+   WorkStyleInput,
+ } from "@routepense/shared";
+@@ -25,6 +26,12 @@ export function saveDailyRecord(date: DateString, workStyle: WorkStyleInput): Pr
+   return request<DailyRecord>(recordUrl(date), { method: "PUT", body: JSON.stringify(body) });
+ }
+ 
++/** PUT /api/daily-records/:date/note: その日の記録のメモを保存する。空（空白だけ）を送るとメモを消す */
++export function saveDailyRecordNote(date: DateString, note: string): Promise<ApiResult<DailyRecord>> {
++  const body: DailyRecordNoteInput = { note };
++  return request<DailyRecord>(`${recordUrl(date)}/note`, { method: "PUT", body: JSON.stringify(body) });
++}
++
+ /** DELETE /api/daily-records/:date: その日の記録を消して「未入力」に戻す（追加の移動も消える） */
+ export function deleteDailyRecord(date: DateString): Promise<ApiResult<undefined>> {
+   return request<undefined>(recordUrl(date), { method: "DELETE" });
+diff --git a/frontend/src/calendar/day-note.test.ts b/frontend/src/calendar/day-note.test.ts
+new file mode 100644
+index 0000000..a09be39
+--- /dev/null
++++ b/frontend/src/calendar/day-note.test.ts
+@@ -0,0 +1,29 @@
++import { describe, expect, it } from "vitest";
++import { isNoteChanged, normalizeNote, noteCount, noteLengthError } from "./day-note";
++
++describe("day-note", () => {
++  it("保存する値は前後の空白を除く。空白だけなら空（メモを消す）", () => {
++    expect(normalizeNote("  健康診断で直帰 \n")).toBe("健康診断で直帰");
++    expect(normalizeNote(" 　")).toBe("");
++  });
++
++  it("前後の空白だけの違いは、変えていないとみなす", () => {
++    expect(isNoteChanged(" 健康診断で直帰 ", { note: "健康診断で直帰" })).toBe(false);
++    expect(isNoteChanged("客先の住所が変わった", { note: "健康診断で直帰" })).toBe(true);
++  });
++
++  it("メモが無い日は、空の欄と同じ。何か書けば変えたことになる", () => {
++    expect(isNoteChanged("  ", {})).toBe(false);
++    expect(isNoteChanged("メモ", {})).toBe(true);
++    expect(isNoteChanged("", { note: "メモ" })).toBe(true);
++  });
++
++  it("前後の空白を除いて200文字までは誤りなし、201文字は誤り", () => {
++    expect(noteLengthError(` ${"あ".repeat(200)} `)).toBeNull();
++    expect(noteLengthError("あ".repeat(201))).toBe("メモは200文字以内で入力してください");
++  });
++
++  it("文字数は前後の空白を除いて数える", () => {
++    expect(noteCount(" 直帰 ")).toBe("2 / 200");
++  });
++});
+diff --git a/frontend/src/calendar/day-note.ts b/frontend/src/calendar/day-note.ts
+new file mode 100644
+index 0000000..920ac0c
+--- /dev/null
++++ b/frontend/src/calendar/day-note.ts
+@@ -0,0 +1,26 @@
++import { MAX_NOTE, type DailyRecord } from "@routepense/shared";
++
++/**
++ * 日のメモの欄で使う純粋関数。
++ * backend と同じく、前後の空白を除いた文字数で長さを数える（空白だけなら「メモなし」）。
++ */
++
++/** 保存するときの値（前後の空白を除いたもの） */
++export function normalizeNote(value: string): string {
++  return value.trim();
++}
++
++/** 欄の値が、保存済みのメモと違うか（前後の空白だけの違いは同じとみなす） */
++export function isNoteChanged(value: string, record: Pick<DailyRecord, "note">): boolean {
++  return normalizeNote(value) !== (record.note ?? "");
++}
++
++/** 長さの誤りの文。誤りが無ければ null */
++export function noteLengthError(value: string): string | null {
++  return normalizeNote(value).length > MAX_NOTE ? `メモは${MAX_NOTE}文字以内で入力してください` : null;
++}
++
++/** 欄の下に出す文字数（例: 12 / 200） */
++export function noteCount(value: string): string {
++  return `${normalizeNote(value).length} / ${MAX_NOTE}`;
++}
+diff --git a/frontend/src/calendar/month-table.test.ts b/frontend/src/calendar/month-table.test.ts
+index 238bcb8..0317f14 100644
+--- a/frontend/src/calendar/month-table.test.ts
++++ b/frontend/src/calendar/month-table.test.ts
+@@ -15,8 +15,9 @@ function record(
+   date: string,
+   workStyle: DailyRecord["workStyle"],
+   extraTrips: DailyRecord["extraTrips"] = [],
++  note?: string,
+ ): DailyRecord {
+-  return { id: `d-${date}`, userId: "u1", date, workStyle, extraTrips };
++  return { id: `d-${date}`, userId: "u1", date, workStyle, extraTrips, ...(note !== undefined && { note }) };
+ }
+ 
+ const records: DailyRecord[] = [
+@@ -118,6 +119,15 @@ describe("buildTableRows", () => {
+     expect(rows.find((r) => r.date === "2026-11-02")?.isDraft).toBe(false);
+   });
+ 
++  it("メモのある日の行はメモを持ち、無い日はプロパティごと無い", () => {
++    const withNote = buildTableRows(
++      buildCalendar("2026-11", [record("2026-11-05", { kind: "remote" }, [], "健康診断で直帰")], new Set()),
++    );
++    expect(withNote.find((r) => r.date === "2026-11-05")?.note).toBe("健康診断で直帰");
++    expect(withNote.find((r) => r.date === "2026-11-06")).not.toHaveProperty("note");
++    expect(rows.find((r) => r.date === "2026-11-02")).not.toHaveProperty("note");
++  });
++
+   it("祝日の行は祝日名を持つ。土日の印は付けない（11/3 は火曜）", () => {
+     expect(rows.find((r) => r.date === "2026-11-03")).toMatchObject({ holidayName: "文化の日", isWeekend: false });
+     expect(rows.find((r) => r.date === "2026-11-02")).not.toHaveProperty("holidayName");
+diff --git a/frontend/src/calendar/month-table.ts b/frontend/src/calendar/month-table.ts
+index a3ee065..3a5033f 100644
+--- a/frontend/src/calendar/month-table.ts
++++ b/frontend/src/calendar/month-table.ts
+@@ -33,6 +33,8 @@ export type TableRow = {
+   fare: number | null;
+   isUnentered: boolean;
+   isDraft: boolean;
++  /** その日のメモ。無ければプロパティごと無い */
++  note?: string;
+ };
+ 
+ /** 表示用の日付（例: 2026-11-02 → 11/2（月）） */
+@@ -75,6 +77,7 @@ export function toTableRow(day: CalendarDay): TableRow {
+     })),
+     fare: status.fare,
+     isUnentered: false,
++    ...(status.record.note !== undefined && { note: status.record.note }),
+   };
+ }
+ 
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index 25d948c..39c6537 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -753,7 +753,7 @@ button.danger:hover:not(:disabled) {
+ 
+ .month-table {
+   width: 100%;
+-  min-width: 42rem;
++  min-width: 48rem;
+   border-collapse: collapse;
+   font-size: 0.875rem;
+ }
+@@ -837,6 +837,14 @@ button.danger:hover:not(:disabled) {
+   font-size: 0.8125rem;
+ }
+ 
++/* メモは長くなることがあるので、折り返して幅を取りすぎないようにする */
++.table-note {
++  max-width: 14rem;
++  color: var(--ink-soft);
++  font-size: 0.8125rem;
++  overflow-wrap: anywhere;
++}
++
+ .month-table tfoot th,
+ .month-table tfoot td {
+   border-top: 2px solid var(--ink);
+@@ -921,6 +929,60 @@ button.danger:hover:not(:disabled) {
+   font-size: 0.8125rem;
+ }
+ 
++/* ---- メモ（日の編集パネルの中） ---- */
++
++.day-note {
++  margin-top: 1rem;
++  padding-top: 1rem;
++  border-top: 1px solid rgb(31 42 68 / 0.12);
++}
++
++.day-note h4 {
++  margin: 0 0 0.5rem;
++  font-size: 0.9375rem;
++}
++
++.day-note textarea {
++  display: block;
++  width: 100%;
++  padding: 0.5rem 0.625rem;
++  border: 1px solid #b9c0cc;
++  border-radius: var(--radius-control);
++  background: var(--surface);
++  color: var(--ink);
++  font: inherit;
++  resize: vertical;
++}
++
++.day-note textarea::placeholder {
++  color: #9aa2b1;
++}
++
++.day-note textarea[aria-invalid="true"] {
++  border-color: var(--danger);
++  background: #fdf3f2;
++}
++
++.day-note-count {
++  margin-top: 0.25rem;
++  color: var(--ink-soft);
++  font-size: 0.75rem;
++  text-align: right;
++  font-variant-numeric: tabular-nums;
++}
++
++.day-note-count.field-error {
++  color: var(--danger);
++}
++
++.day-note-actions {
++  display: flex;
++  align-items: center;
++  gap: 0.5rem;
++  margin-top: 0.375rem;
++  font-size: 0.8125rem;
++}
++
+ /* ---- 追加の移動（日の編集パネルの中） ---- */
+ 
+ .extra-trips {
+diff --git a/shared/src/csv.test.ts b/shared/src/csv.test.ts
+index 120efce..11bf834 100644
+--- a/shared/src/csv.test.ts
++++ b/shared/src/csv.test.ts
+@@ -15,14 +15,19 @@ function trip(overrides: Partial<ExtraTrip> = {}): ExtraTrip {
+   return { id: "trip-1", from: "B駅", to: "C駅", transport: "bus", oneWayFare: 160, tripType: "oneWay", ...overrides };
+ }
+ 
+-function record(date: string, workStyle: WorkStyle, extraTrips: ExtraTrip[] = []): Pick<DailyRecord, "date" | "workStyle" | "extraTrips"> {
+-  return { date, workStyle, extraTrips };
++function record(
++  date: string,
++  workStyle: WorkStyle,
++  extraTrips: ExtraTrip[] = [],
++  note?: string,
++): Pick<DailyRecord, "date" | "workStyle" | "extraTrips" | "note"> {
++  return { date, workStyle, extraTrips, ...(note !== undefined && { note }) };
+ }
+ 
+ describe("monthCsvRows", () => {
+   it("出勤日は通常ルートの1行（往復・金額は片道 × 2）", () => {
+     expect(monthCsvRows([record("2026-11-04", commute)])).toEqual([
+-      ["2026-11-04", "水", "", "出勤", "通常", "A駅", "B駅", "電車", "往復", "220", "440", "自宅↔本社", ""],
++      ["2026-11-04", "水", "", "出勤", "通常", "A駅", "B駅", "電車", "往復", "220", "440", "自宅↔本社", "", ""],
+     ]);
+   });
+ 
+@@ -38,8 +43,8 @@ describe("monthCsvRows", () => {
+       ]),
+     ]);
+     expect(rows).toEqual([
+-      ["2026-11-05", "木", "", "在宅", "追加", "B駅", "C駅", "バス", "片道", "160", "160", "", "客先B打合せ"],
+-      ["2026-11-05", "木", "", "在宅", "追加", "B駅", "C駅", "その他", "往復", "160", "320", "", ""],
++      ["2026-11-05", "木", "", "在宅", "追加", "B駅", "C駅", "バス", "片道", "160", "160", "", "客先B打合せ", ""],
++      ["2026-11-05", "木", "", "在宅", "追加", "B駅", "C駅", "その他", "往復", "160", "320", "", "", ""],
+     ]);
+   });
+ 
+@@ -54,6 +59,23 @@ describe("monthCsvRows", () => {
+     expect(records[0]?.date).toBe("2026-11-10");
+   });
+ 
++  it("最後の列はメモ。その日の行のすべてに同じメモを入れ、メモが無い日は空", () => {
++    const rows = monthCsvRows([
++      record("2026-11-04", commute, [trip({ purpose: "客先B打合せ" })], "健康診断で直帰"),
++      record("2026-11-05", commute),
++    ]);
++    expect(CSV_HEADER.at(-1)).toBe("メモ");
++    expect(rows.map((row) => [row[0], row[4], row[12], row[13]])).toEqual([
++      ["2026-11-04", "通常", "", "健康診断で直帰"],
++      ["2026-11-04", "追加", "客先B打合せ", "健康診断で直帰"],
++      ["2026-11-05", "通常", "", ""],
++    ]);
++  });
++
++  it("メモがあっても、移動の無い日（在宅・休日で追加の移動が無い日）は行を作らない", () => {
++    expect(monthCsvRows([record("2026-11-05", { kind: "remote" }, [], "客先の住所が変わった")])).toEqual([]);
++  });
++
+   it("祝日は祝日名を入れる（勤務区分はそのまま）", () => {
+     expect(monthCsvRows([record("2026-11-03", commute)])[0]?.slice(0, 4)).toEqual(["2026-11-03", "火", "文化の日", "出勤"]);
+   });
+@@ -88,12 +110,12 @@ describe("escapeCsvField", () => {
+ 
+ describe("monthCsv", () => {
+   it("BOM・見出し・CRLF の改行で、最後の行にも CRLF が付く", () => {
+-    const csv = monthCsv([record("2026-11-04", commute, [trip({ purpose: "打合せ, 資料" })])]);
++    const csv = monthCsv([record("2026-11-04", commute, [trip({ purpose: "打合せ, 資料" })], '直帰、"健診"')]);
+     expect(csv.startsWith(UTF8_BOM)).toBe(true);
+     expect(csv.slice(UTF8_BOM.length).split("\r\n")).toEqual([
+       CSV_HEADER.join(","),
+-      "2026-11-04,水,,出勤,通常,A駅,B駅,電車,往復,220,440,自宅↔本社,",
+-      '2026-11-04,水,,出勤,追加,B駅,C駅,バス,片道,160,160,,"打合せ, 資料"',
++      `2026-11-04,水,,出勤,通常,A駅,B駅,電車,往復,220,440,自宅↔本社,,"直帰、""健診"""`,
++      `2026-11-04,水,,出勤,追加,B駅,C駅,バス,片道,160,160,,"打合せ, 資料","直帰、""健診"""`,
+       "",
+     ]);
+   });
+diff --git a/shared/src/csv.ts b/shared/src/csv.ts
+index b8f6e54..0e24f69 100644
+--- a/shared/src/csv.ts
++++ b/shared/src/csv.ts
+@@ -9,6 +9,7 @@ import type { WorkStyleKind } from "./work-style";
+ /**
+  * 月の明細の CSV（要件定義 F7・U10）。
+  * 1行 = 1つの移動。出勤日の通常ルートで1行、追加の移動1件ごとに1行。移動の無い日は行を作らない。
++ * 最後の列「メモ」は日のメモ。その日の行のすべてに、同じメモを入れる（メモがあっても、移動の無い日は行を作らない）。
+  * 画面からも backend からも同じ結果になるよう、shared の純粋関数にしている。
+  */
+ 
+@@ -27,6 +28,7 @@ export const CSV_HEADER = [
+   "金額",
+   "ルート名",
+   "目的",
++  "メモ",
+ ] as const;
+ 
+ /** タプルの各要素を string にした型（要素の数はそのまま）。型引数 T を通すと、マップ型がタプルのまま残る */
+@@ -40,7 +42,7 @@ const WORK_STYLE_LABELS: Record<WorkStyleKind, string> = { remote: "在宅", com
+ const TRANSPORT_LABELS: Record<Transport, string> = { train: "電車", bus: "バス", other: "その他" };
+ const TRIP_TYPE_LABELS: Record<TripType, string> = { oneWay: "片道", roundTrip: "往復" };
+ 
+-type CsvRecord = Pick<DailyRecord, "date" | "workStyle" | "extraTrips">;
++type CsvRecord = Pick<DailyRecord, "date" | "workStyle" | "extraTrips" | "note">;
+ 
+ /** 日次記録の一覧から、明細の行（見出しを除く）を作る。日付の順に並べ、同じ日は通常 → 追加の順 */
+ export function monthCsvRows(records: readonly CsvRecord[]): CsvRow[] {
+@@ -53,6 +55,7 @@ function recordRows(record: CsvRecord): CsvRow[] {
+   const day = dayColumns(record.date, record.workStyle.kind);
+   const rows: CsvRow[] = [];
+   const workStyle = record.workStyle;
++  const note = record.note ?? "";
+   if (workStyle.kind === "commute") {
+     const { route } = workStyle;
+     rows.push([
+@@ -66,6 +69,7 @@ function recordRows(record: CsvRecord): CsvRow[] {
+       String(workStyleFare(workStyle)),
+       route.name,
+       "",
++      note,
+     ]);
+   }
+   for (const trip of record.extraTrips) {
+@@ -80,6 +84,7 @@ function recordRows(record: CsvRecord): CsvRow[] {
+       String(extraTripFare(trip)),
+       "",
+       trip.purpose ?? "",
++      note,
+     ]);
+   }
+   return rows;
+diff --git a/shared/src/daily-record.ts b/shared/src/daily-record.ts
+index c198718..492fe17 100644
+--- a/shared/src/daily-record.ts
++++ b/shared/src/daily-record.ts
+@@ -10,9 +10,19 @@ export type DailyRecord = {
+   workStyle: WorkStyle;
+   /** 追加の移動（0件以上） */
+   extraTrips: ExtraTrip[];
++  /** その日の自由なメモ（例: 健康診断で直帰）。メモが無い日は、プロパティごと付けない */
++  note?: string;
+ };
+ 
+ /** PUT /api/daily-records/:date の本文 */
+ export type DailyRecordInput = {
+   workStyle: WorkStyleInput;
+ };
++
++/** メモの長さの上限（前後の空白を除いた文字数） */
++export const MAX_NOTE = 200;
++
++/** PUT /api/daily-records/:date/note の本文。空（空白だけを含む）ならメモを消す */
++export type DailyRecordNoteInput = {
++  note: string;
++};
+diff --git a/shared/src/index.ts b/shared/src/index.ts
+index 08ccb73..e826a02 100644
+--- a/shared/src/index.ts
++++ b/shared/src/index.ts
+@@ -3,7 +3,8 @@
+ export type { ApiError, FieldError } from "./api";
+ export type { BulkInput, BulkPreviewRequest, BulkSaveRequest } from "./bulk";
+ export { bulkTargetDates } from "./bulk";
+-export type { DailyRecord, DailyRecordInput } from "./daily-record";
++export type { DailyRecord, DailyRecordInput, DailyRecordNoteInput } from "./daily-record";
++export { MAX_NOTE } from "./daily-record";
+ export type { DateString, Weekday } from "./date";
+ export { nextDate, weekdayOf } from "./date";
+ export { HOLIDAY_YEARS, HOLIDAYS, holidayName } from "./holidays";

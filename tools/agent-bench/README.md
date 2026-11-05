@@ -23,6 +23,10 @@ errnav だけの効果は [`tools/errnav/bench/`](../errnav/bench/README.md) で
 |---|---|---|
 | [T1-daily-note](tasks/T1-daily-note/task.md) | 日次記録にメモを付ける（API・画面・CSV） | DB のスキーマが変わる（「確認が必要な項目」を申告するか）。DB・API・画面・CSV・文書と触る層が多い。正しさを受け入れテストで判定しやすい |
 
+| [T2-note-followup](tasks/T2-note-followup/task.md) | **T1 の続き**: メモの上限を 100 文字に・移動の無い日もメモがあれば CSV に1行 | 前の作業（T1 の template と bare の結果）の上で、ルールを知らない新しい AI に頼む。前の作業が残した物（要件定義・教科書・手順書・PROGRESS.md・コミットのメッセージ）が、後から作業する AI の役に立つかを見る |
+
+**続きの Task（T2）のしくみ**: `bases/<名前>.diff` と PR の文面を、スカッシュマージした後の main と同じ形（前の作業 = コミット1つ、メッセージ = PR のタイトルと本文）で入れた作業場所から始める。条件は `from-template`・`from-bare`。続きをやる AI の条件はそろえる（どちらも CLAUDE.md は最小限・ルールの文書なし）ので、違うのは前の作業が残した物だけ。採点は前の作業の後（タグ `bench-start`）からの変化を見て、`leftover_files`（作業の後も「200 文字」と書いてあるファイルの数 = 直し漏れ）も出す。
+
 Task のディレクトリ:
 
 | ファイル | 内容 |
