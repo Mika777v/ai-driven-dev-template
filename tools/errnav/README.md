@@ -182,9 +182,33 @@ errnav_myapp_path_map() { printf '%s\n' '/opt/myapp=.'; }
 - Linux・WSL・macOS（bash 3.2 以上。macOS の標準の bash と BSD のコマンドで動くように書いています）
 - awk は gawk・mawk・macOS の awk のどれでも
 
-## 効果を測る
+## AI のスキルとして使う
 
-AI の不具合の調査が errnav で安く・速くなるかを測るベンチマークは [bench/README.md](bench/README.md)。
+Claude Code では、[skill/SKILL.md](skill/SKILL.md) を `.claude/skills/errnav/SKILL.md` に置くと、「エラーを調べる」場面でだけ errnav の手順が読み込まれます（ふだんの作業では、名前と説明の数十トークンしか読まれない）。
+
+```bash
+mkdir -p .claude/skills/errnav && cp tools/errnav/skill/SKILL.md .claude/skills/errnav/
+```
+
+## 効果（routepense で測った結果）
+
+2026-11-04 に、[routepense](https://github.com/Mika777v/routepense) に仕込んだ3つの不具合を Claude Code に調べさせて比べた（各条件1回なので傾向として読む）。どの条件でも、3つとも原因のファイルと行を正しく答えた。
+
+| 不具合 | errnav なし | errnav あり | 短い CLAUDE.md | 短い CLAUDE.md + スキル |
+|---|---|---|---|---|
+| 例外（落ちる場所と原因が離れている） | 3回 / 15.2万 | 2回 / 11.3万 | 2回 / 10.3万 | 3回 / 14.0万 |
+| ライブラリ（SQLite）の奥のエラー | 5回 / 22.6万 | 3回 / 15.4万 | 4回 / 17.8万 | 3回 / 13.9万 |
+| 例外なし（値だけが違う） | 2回 / 10.9万 | 2回 / 11.2万 | 2回 / 9.9万 | 3回 / 13.5万 |
+
+（ツールの呼び出しの回数 / トークンの合計）
+
+わかったこと:
+
+- **例外の出る不具合では、errnav でツールの呼び出しが1〜2回、トークンが2〜4割減った。** 例外の出ない不具合では差が無い（errnav が原因の場所を示せないため）
+- **毎回読まれる CLAUDE.md を短くすると、1ターンあたり約1割減る**（約 10.8KB → 1.2KB で約 3,400 トークン）。AI はターンのたびに全部を読み直すので、詳しい運用は `docs/` に移し、CLAUDE.md（AGENTS.md）には要点だけを置く
+- **スキルにすると、AI は指示されなくても調査のときに errnav を使った。** ただ読み込みでターンが2つ増えるので、小さな不具合では得も損も小さい
+
+測るのに使ったスクリプトは、テンプレートには入れていない（routepense 専用のため）。git の履歴（#3〜#5 で追加し、その後に削除）と、ブランチ `bench/agent-bench`（テンプレートの運用ルール全体を測る版。結果はルートの README の「ルールの効果」）に残っている。
 
 ## テスト
 
