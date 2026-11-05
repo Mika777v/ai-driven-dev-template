@@ -186,7 +186,8 @@ cmd_run() {
   command -v timeout >/dev/null && to=(timeout "$TIMEOUT_SEC")
   for rep in $(seq 1 "$RUNS"); do
     for cond in $CONDITIONS; do
-      tag="$TASK_NAME-$cond-$rep"
+      # モデルを決めたときは、結果の名前にモデルを入れる（ほかのモデルの結果を上書きしないように）
+      tag="$TASK_NAME-$cond-${BENCH_MODEL:+${BENCH_MODEL#claude-}-}$rep"
       [ -s "$OUT/runs/$tag.score" ] && { info "== $tag（済み。やり直すなら $OUT/runs/$tag.* を消す）"; continue; }
       ws="$OUT/ws-$tag"
       make_workspace "$cond" "$ws"
