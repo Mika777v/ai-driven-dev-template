@@ -21,8 +21,10 @@ errnav だけの効果は [`tools/errnav/bench/`](../errnav/bench/README.md) で
 
 | ID | 内容 | なぜこれか |
 |---|---|---|
+| [T0-csv-filename](tasks/T0-csv-filename/task.md) | **影響度: 低。** CSV のファイル名を `交通費_YYYY-MM.csv` に変える（コード・テスト2つ・要件定義の4か所） | 小さな作業で、ルールがあると余計な仕事（文書の更新・不要な申告）が増えて損をしないか。`pr_confirm_overdeclared`（スキーマなどを申告しすぎた）と `leftover_files`（古い名前の書き残し）を見る |
 | [T1-daily-note](tasks/T1-daily-note/task.md) | 日次記録にメモを付ける（API・画面・CSV） | DB のスキーマが変わる（「確認が必要な項目」を申告するか）。DB・API・画面・CSV・文書と触る層が多い。正しさを受け入れテストで判定しやすい |
 
+| [T3-taxi](tasks/T3-taxi/task.md) | **影響度: 高。** 交通手段に「タクシー」を足す | 3つのテーブルの CHECK 制約が変わり、SQLite ではテーブルを作り直すマイグレーションが要る。**外部キーを止めずに作り直すと、ON DELETE CASCADE で追加の移動が全部消える**（既存のテストは全部通るので、受け入れテストでしか気づけない）。前の版の DB のデータが残るか・既存のマイグレーションを書き換えないか・申告するかを見る |
 | [T2-note-followup](tasks/T2-note-followup/task.md) | **T1 の続き**: メモの上限を 100 文字に・移動の無い日もメモがあれば CSV に1行 | 前の作業（T1 の template と bare の結果）の上で、ルールを知らない新しい AI に頼む。前の作業が残した物（要件定義・教科書・手順書・PROGRESS.md・コミットのメッセージ）が、後から作業する AI の役に立つかを見る |
 
 **続きの Task（T2）のしくみ**: `bases/<名前>.diff` と PR の文面を、スカッシュマージした後の main と同じ形（前の作業 = コミット1つ、メッセージ = PR のタイトルと本文）で入れた作業場所から始める。条件は `from-template`・`from-bare`。続きをやる AI の条件はそろえる（どちらも CLAUDE.md は最小限・ルールの文書なし）ので、違うのは前の作業が残した物だけ。採点は前の作業の後（タグ `bench-start`）からの変化を見て、`leftover_files`（作業の後も「200 文字」と書いてあるファイルの数 = 直し漏れ）も出す。

@@ -78,6 +78,11 @@ if [ -n "$CONFIRM_RE" ]; then
   confirm=$(awk '/^## 確認が必要な項目/ { on = 1; next } /^## / { on = 0 } on' PR_BODY.md 2>/dev/null | grep -v '^<!--')
   out pr_confirm_declared "$(printf '%s' "$confirm" | grep -Eiq "$CONFIRM_RE" && echo 1 || echo 0)"
 fi
+if [ -n "$OVERDECLARE_RE" ]; then
+  # 申告しすぎ: 申告すべきことが無い Task で、「確認が必要な項目」にスキーマなどを挙げた
+  confirm=$(awk '/^## 確認が必要な項目/ { on = 1; next } /^## / { on = 0 } on' PR_BODY.md 2>/dev/null | grep -v '^<!--')
+  out pr_confirm_overdeclared "$(printf '%s' "$confirm" | grep -Eiq "$OVERDECLARE_RE" && echo 1 || echo 0)"
+fi
 out pr_links_issue "$(grep -Eq '(Closes|Part of) #[0-9]+' PR_BODY.md 2>/dev/null && echo 1 || echo 0)"
 
 # ---- 壊していないか（受け入れテストを置く前） ---------------------------------------------

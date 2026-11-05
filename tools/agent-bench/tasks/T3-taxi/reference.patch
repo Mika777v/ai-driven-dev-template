@@ -1,0 +1,146 @@
+diff --git a/backend/src/db/database.ts b/backend/src/db/database.ts
+index cf31a10..4d85d3c 100644
+--- a/backend/src/db/database.ts
++++ b/backend/src/db/database.ts
+@@ -14,6 +14,22 @@ export function openDatabase(path: string): DatabaseSync {
+ 
+ function migrate(db: DatabaseSync): void {
+   const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
++  // テーブルを作り直すマイグレーション（CHECK を変えるなど）では、古いテーブルを消すときに
++  // ON DELETE CASCADE で子の行まで消えないよう、外部キーを止める（トランザクションの中では変えられないので外で）
++  db.exec("PRAGMA foreign_keys = OFF");
++  try {
++    migrateAll(db, row.user_version);
++  } finally {
++    db.exec("PRAGMA foreign_keys = ON");
++  }
++  const broken = db.prepare("PRAGMA foreign_key_check").all();
++  if (broken.length > 0) {
++    throw new Error(`マイグレーションの後に外部キーの食い違いがあります: ${JSON.stringify(broken)}`);
++  }
++}
++
++function migrateAll(db: DatabaseSync, userVersion: number): void {
++  const row = { user_version: userVersion };
+   for (const m of migrations) {
+     if (m.version <= row.user_version) continue;
+     // 1つのマイグレーションは、全部成功するか、全部取り消されるかのどちらか
+diff --git a/backend/src/db/migrations.ts b/backend/src/db/migrations.ts
+index 9d0d29b..8aa615b 100644
+--- a/backend/src/db/migrations.ts
++++ b/backend/src/db/migrations.ts
+@@ -76,4 +76,75 @@ export const migrations: readonly { version: number; sql: string }[] = [
+       ALTER TABLE routes ADD COLUMN search_url TEXT;
+     `,
+   },
++  {
++    version: 4,
++    sql: `
++      -- 交通手段に taxi を足す。SQLite は CHECK を後から変えられないので、3つのテーブルを作り直してデータを移す
++      CREATE TABLE routes_new (
++        id           TEXT PRIMARY KEY,
++        user_id      TEXT NOT NULL,
++        name         TEXT NOT NULL,
++        from_place   TEXT NOT NULL,
++        to_place     TEXT NOT NULL,
++        transport    TEXT NOT NULL CHECK (transport IN ('train', 'bus', 'taxi', 'other')),
++        one_way_fare INTEGER NOT NULL CHECK (one_way_fare >= 0),
++        created_at   TEXT NOT NULL,
++        updated_at   TEXT NOT NULL,
++        search_url   TEXT
++      );
++      INSERT INTO routes_new (id, user_id, name, from_place, to_place, transport, one_way_fare, created_at, updated_at, search_url)
++        SELECT id, user_id, name, from_place, to_place, transport, one_way_fare, created_at, updated_at, search_url FROM routes;
++      DROP TABLE routes;
++      ALTER TABLE routes_new RENAME TO routes;
++      CREATE INDEX routes_user_id ON routes (user_id);
++
++      CREATE TABLE daily_records_new (
++        id           TEXT PRIMARY KEY,
++        user_id      TEXT NOT NULL,
++        date         TEXT NOT NULL,
++        work_kind    TEXT NOT NULL CHECK (work_kind IN ('remote', 'commute', 'holiday')),
++        route_id           TEXT,
++        route_name         TEXT,
++        route_from         TEXT,
++        route_to           TEXT,
++        route_transport    TEXT CHECK (route_transport IN ('train', 'bus', 'taxi', 'other')),
++        route_one_way_fare INTEGER CHECK (route_one_way_fare >= 0),
++        created_at   TEXT NOT NULL,
++        updated_at   TEXT NOT NULL,
++        UNIQUE (user_id, date),
++        CHECK (
++          (work_kind = 'commute' AND route_id IS NOT NULL AND route_name IS NOT NULL
++            AND route_from IS NOT NULL AND route_to IS NOT NULL
++            AND route_transport IS NOT NULL AND route_one_way_fare IS NOT NULL)
++          OR
++          (work_kind <> 'commute' AND route_id IS NULL AND route_name IS NULL
++            AND route_from IS NULL AND route_to IS NULL
++            AND route_transport IS NULL AND route_one_way_fare IS NULL)
++        )
++      );
++      INSERT INTO daily_records_new SELECT id, user_id, date, work_kind, route_id, route_name, route_from, route_to,
++        route_transport, route_one_way_fare, created_at, updated_at FROM daily_records;
++
++      CREATE TABLE extra_trips_new (
++        id              TEXT PRIMARY KEY,
++        daily_record_id TEXT NOT NULL REFERENCES daily_records (id) ON DELETE CASCADE,
++        from_place      TEXT NOT NULL,
++        to_place        TEXT NOT NULL,
++        transport       TEXT NOT NULL CHECK (transport IN ('train', 'bus', 'taxi', 'other')),
++        one_way_fare    INTEGER NOT NULL CHECK (one_way_fare >= 0),
++        trip_type       TEXT NOT NULL CHECK (trip_type IN ('oneWay', 'roundTrip')),
++        purpose         TEXT,
++        source_route_id TEXT,
++        created_at      TEXT NOT NULL
++      );
++      INSERT INTO extra_trips_new SELECT id, daily_record_id, from_place, to_place, transport, one_way_fare, trip_type,
++        purpose, source_route_id, created_at FROM extra_trips;
++
++      DROP TABLE extra_trips;
++      DROP TABLE daily_records;
++      ALTER TABLE daily_records_new RENAME TO daily_records;
++      ALTER TABLE extra_trips_new RENAME TO extra_trips;
++      CREATE INDEX extra_trips_daily_record_id ON extra_trips (daily_record_id);
++    `,
++  },
+ ];
+diff --git a/frontend/src/routes/route-form.ts b/frontend/src/routes/route-form.ts
+index 2e27e9e..8d34366 100644
+--- a/frontend/src/routes/route-form.ts
++++ b/frontend/src/routes/route-form.ts
+@@ -27,6 +27,7 @@ export type RouteFormErrors = Partial<Record<RouteFormField, string>>;
+ export const TRANSPORT_LABELS: Record<Transport, string> = {
+   train: "電車",
+   bus: "バス",
++  taxi: "タクシー",
+   other: "その他",
+ };
+ 
+diff --git a/shared/src/csv.ts b/shared/src/csv.ts
+index b8f6e54..c02c4b8 100644
+--- a/shared/src/csv.ts
++++ b/shared/src/csv.ts
+@@ -37,7 +37,7 @@ export type CsvRow = AllString<typeof CSV_HEADER>;
+ 
+ const WEEKDAY_LABELS: Record<Weekday, string> = { 0: "日", 1: "月", 2: "火", 3: "水", 4: "木", 5: "金", 6: "土" };
+ const WORK_STYLE_LABELS: Record<WorkStyleKind, string> = { remote: "在宅", commute: "出勤", holiday: "休日" };
+-const TRANSPORT_LABELS: Record<Transport, string> = { train: "電車", bus: "バス", other: "その他" };
++const TRANSPORT_LABELS: Record<Transport, string> = { train: "電車", bus: "バス", taxi: "タクシー", other: "その他" };
+ const TRIP_TYPE_LABELS: Record<TripType, string> = { oneWay: "片道", roundTrip: "往復" };
+ 
+ type CsvRecord = Pick<DailyRecord, "date" | "workStyle" | "extraTrips">;
+diff --git a/shared/src/route.ts b/shared/src/route.ts
+index e065ea3..9bc0904 100644
+--- a/shared/src/route.ts
++++ b/shared/src/route.ts
+@@ -1,7 +1,7 @@
+ /** 交通手段の一覧。画面の選択肢と、API のバリデーションの両方で使う */
+-export const TRANSPORTS = ["train", "bus", "other"] as const;
++export const TRANSPORTS = ["train", "bus", "taxi", "other"] as const;
+ 
+-/** 交通手段: "train" | "bus" | "other"（TRANSPORTS から作るので、一覧と型がずれない） */
++/** 交通手段: "train" | "bus" | "taxi" | "other"（TRANSPORTS から作るので、一覧と型がずれない） */
+ export type Transport = (typeof TRANSPORTS)[number];
+ 
+ /** 登録しておく出勤ルート（例: 自宅↔本社） */

@@ -1,0 +1,49 @@
+diff --git a/docs/requirements.md b/docs/requirements.md
+index b4986f2..4572253 100644
+--- a/docs/requirements.md
++++ b/docs/requirements.md
+@@ -104,7 +104,7 @@
+ 
+ - 金額の列の和は、月次画面の月の合計（F5）と必ず一致する。合計の行は CSV に入れない（表計算ソフトで足せるため。転記のときに明細と混ざらないように）。
+ - 文字コードは UTF-8（BOM 付き）、改行は CRLF。値にカンマ・改行・`"` があれば `"` で囲む（RFC 4180）。
+-- ファイル名は `routepense-YYYY-MM.csv`（例: `routepense-2026-11.csv`）。
++- ファイル名は `交通費_YYYY-MM.csv`（例: `交通費_2026-11.csv`）。
+ - 保存するのは登録済みの記録だけ。一括設定の当てはめ中はボタンを押せない（未登録の内容が混ざらないように）。
+ - 未入力の日が残っているときも保存できる。ボタンの近くに「未入力の日は CSV に入りません」と出す。
+ 
+diff --git a/frontend/src/calendar/csv-export.test.ts b/frontend/src/calendar/csv-export.test.ts
+index 1910446..0327ec6 100644
+--- a/frontend/src/calendar/csv-export.test.ts
++++ b/frontend/src/calendar/csv-export.test.ts
+@@ -17,7 +17,7 @@ const record: DailyRecord = {
+ describe("buildCsvFile", () => {
+   it("ファイル名は表示中の月、中身は保存済みの記録の明細", () => {
+     const file = buildCsvFile("2026-11", [record]);
+-    expect(file.fileName).toBe("routepense-2026-11.csv");
++    expect(file.fileName).toBe("交通費_2026-11.csv");
+     expect(file.text).toContain("2026-11-04,水,,出勤,通常,A駅,B駅,電車,往復,220,440,自宅↔本社,");
+   });
+ });
+diff --git a/shared/src/csv.test.ts b/shared/src/csv.test.ts
+index 120efce..b4dd15c 100644
+--- a/shared/src/csv.test.ts
++++ b/shared/src/csv.test.ts
+@@ -105,6 +105,6 @@ describe("monthCsv", () => {
+ 
+ describe("csvFileName", () => {
+   it("routepense-YYYY-MM.csv", () => {
+-    expect(csvFileName("2026-11")).toBe("routepense-2026-11.csv");
++    expect(csvFileName("2026-11")).toBe("交通費_2026-11.csv");
+   });
+ });
+diff --git a/shared/src/csv.ts b/shared/src/csv.ts
+index b8f6e54..0beb199 100644
+--- a/shared/src/csv.ts
++++ b/shared/src/csv.ts
+@@ -112,5 +112,5 @@ export function monthCsv(records: readonly CsvRecord[]): string {
+ 
+ /** 保存するファイルの名前。month は YYYY-MM */
+ export function csvFileName(month: string): string {
+-  return `routepense-${month}.csv`;
++  return `交通費_${month}.csv`;
+ }

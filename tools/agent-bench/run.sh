@@ -168,9 +168,9 @@ cmd_dry() {
     echo "== 正解の実装（reference.patch）を当てた場合（受け入れテストは全部通るはず）"
     make_workspace template "$ws"
     (cd "$ws" && git apply "$TASK/reference.patch" && git checkout -q -b feat/daily-note &&
-      git add -A && git commit -q -m "feat(backend): 日次記録にメモを付ける" &&
-      printf 'feat(backend): 日次記録にメモを付ける\n' > PR_TITLE.txt &&
-      printf '## 概要\n## 変更内容\n## 確認が必要な項目\nDB のスキーマの変更（マイグレーション 4）\n## 動作確認の方法\n## チェックリスト\n' > PR_BODY.md) || die "正解の実装を当てられません"
+      git add -A && git commit -q -m "feat: 正解の実装（dry）" &&
+      printf 'feat: 正解の実装（dry）\n' > PR_TITLE.txt &&
+      printf '## 概要\n## 変更内容\n## 確認が必要な項目\n（dry の仮の本文）\n## 動作確認の方法\n## チェックリスト\n' > PR_BODY.md) || die "正解の実装を当てられません"
     bash "$HERE/score.sh" "$ws" "$TASK" | sed 's/^/  /'
   fi
   rm -rf "$ws"
