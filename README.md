@@ -40,6 +40,7 @@ Claude Code・GitHub Copilot・Cursor・Gemini・Cline・Roo Code など、複�
 │   ├── AI_SESSION_GUIDE.md            セッションの区切り方・読む順番・引き継ぎ
 │   ├── PROJECT_BOOTSTRAP_CHECKLIST.md 導入の手順（人と AI の分担つき）
 │   ├── PROGRESS.md                    進み具合（セッションをまたぐ引き継ぎのメモ）
+│   ├── TROUBLESHOOTING.md             困ったときの手順書（症状 → 原因 → 見る場所）
 │   └── adr/                           設計判断の記録（README・テンプレート）
 │
 ├── .github/

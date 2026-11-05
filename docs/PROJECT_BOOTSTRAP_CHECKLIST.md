@@ -51,6 +51,7 @@ docs/PROJECT_BOOTSTRAP_CHECKLIST.md の §2 を進めて。プロジェクトの
 - [ ] `docs/AI_GIT_WORKFLOW.md` — 既定ブランチ・scope
 - [ ] `docs/AI_SESSION_GUIDE.md` — 環境の準備・使うツールの行
 - [ ] `docs/PROGRESS.md` — 最初の「次にやること」
+- [ ] `docs/TROUBLESHOOTING.md` — 節（起動・画面・API など）をプロジェクトの作りに合わせる
 - [ ] `.github/workflows/pr-title.yml` の `scopes` を `{{SCOPES}}` と同じにする
 - [ ] `.github/labels.yml` の `area:*` をプロジェクトのディレクトリに合わせる
 - [ ] `.github/ISSUE_TEMPLATE/config.yml` の URL を直す

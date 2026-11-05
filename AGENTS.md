@@ -20,6 +20,7 @@
 | セッションの始め方・終わり方・引き継ぎ | [`docs/AI_SESSION_GUIDE.md`](docs/AI_SESSION_GUIDE.md) |
 | いまの進み具合・次にやること | [`docs/PROGRESS.md`](docs/PROGRESS.md) |
 | 過去の設計判断 | [`docs/adr/`](docs/adr/README.md) |
+| 困ったとき（症状 → 原因 → 見る場所） | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) |
 | 不具合の調べ方・再現の確かめ方 | [`tools/errnav/README.md`](tools/errnav/README.md)（`tools/errnav/bin/errnav show latest`・`context`・`repro`）。まず errnav を使い、取れないとき（知らない形のログ・エラーの出ない不具合）は自分で grep などで調べてよい |
 
 ## 1. プロジェクトの要約（3行）
@@ -42,10 +43,12 @@
 3. **force push しない。** push 済みの履歴を書き換えない。マージ済みの PR の続きは新しいブランチで別の PR にする。`{{DEFAULT_BRANCH}}` の取り込みは rebase ではなく merge
 4. **「確認が必要な項目」に当てはまる PR は、自動マージせずオーナーに確認する。** 待つのはその PR だけで、依存しない作業は進める（ADR・DB スキーマ・要件・運用ルール/CI・依存のメジャー更新・認証/権限・リリース）→ [AI_GIT_WORKFLOW §5](docs/AI_GIT_WORKFLOW.md)
 5. **PR を出す前に、手元で `{{CHECK_COMMAND}}` を通す。** CI が落ちたら原因を直す。テストを消す・飛ばす・弱めることで通さない
-6. **秘密情報（API キー・パスワード・個人情報）をコミットしない。** 見つけたら作業を止めて報告する
-7. **やらないこと（スコープ外）に手を広げない。** 必要そうなら Issue にして提案する → [AI_PROJECT_CONTEXT §4](docs/AI_PROJECT_CONTEXT.md)
-8. **区切りで止まって報告する。** 区切りの単位: {{CHECKPOINT_UNIT}}（例: Epic 1つ / マージ 10 件 / リリース1つ）→ [AI_WORKFLOW §6](docs/AI_WORKFLOW.md)
-9. **セッションを終える前に `docs/PROGRESS.md` を更新する。** 会話の中で決めたことは会話の外（docs）に残す → [AI_SESSION_GUIDE](docs/AI_SESSION_GUIDE.md)
+6. **後から変えにくいことを決めたら ADR を書く。** DB の作り直し・データの移し方・方式や外部サービスの選択など。PR の本文の「自分で決めたこと」だけで済ませない → [docs/adr/](docs/adr/README.md)
+7. **画面のメッセージ・API のエラー（ステータス）・起動のログを足す・変えたら、同じ PR で [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) も直す。** 困ったことの原因が分かったら、「起きたことの記録」と表に足す
+8. **秘密情報（API キー・パスワード・個人情報）をコミットしない。** 見つけたら作業を止めて報告する
+9. **やらないこと（スコープ外）に手を広げない。** 必要そうなら Issue にして提案する → [AI_PROJECT_CONTEXT §4](docs/AI_PROJECT_CONTEXT.md)
+10. **区切りで止まって報告する。** 区切りの単位: {{CHECKPOINT_UNIT}}（例: Epic 1つ / マージ 10 件 / リリース1つ）→ [AI_WORKFLOW §6](docs/AI_WORKFLOW.md)
+11. **セッションを終える前に `docs/PROGRESS.md` を更新する。** 会話の中で決めたことは会話の外（docs）に残す → [AI_SESSION_GUIDE](docs/AI_SESSION_GUIDE.md)
 
 ## 4. コマンド
 
@@ -88,7 +91,7 @@
 - オーナーは Java 経験者。TypeScript の書き方は Java と対比して説明する
 
 ## 3. 必ず守ること（要点）
-8. **区切りで止まって報告する。** 区切りの単位: Epic 1つ（AI_PROJECT_CONTEXT の「進め方」の1ステップ）
+10. **区切りで止まって報告する。** 区切りの単位: Epic 1つ（AI_PROJECT_CONTEXT の「進め方」の1ステップ）
 
 ## 4. コマンド
 | 依存の導入 | `npm install` |
