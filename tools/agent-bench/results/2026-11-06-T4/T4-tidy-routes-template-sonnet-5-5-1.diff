@@ -1,0 +1,37 @@
+diff --git a/backend/src/daily-records/daily-record-router.test.ts b/backend/src/daily-records/daily-record-router.test.ts
+index 504b474..620788c 100644
+--- a/backend/src/daily-records/daily-record-router.test.ts
++++ b/backend/src/daily-records/daily-record-router.test.ts
+@@ -134,6 +134,32 @@ describe("/api/daily-records", () => {
+     });
+   });
+ 
++  describe("ルートを削除したあとの記録（U7）", () => {
++    it("使っていたルートを消しても、記録は残り、コピーしたルートの値のまま読める", async () => {
++      const route = await createRoute();
++      await send("PUT", "/daily-records/2026-11-02", { workStyle: { kind: "commute", routeId: route.id } });
++
++      expect((await send("DELETE", `/routes/${route.id}`)).status).toBe(204);
++
++      const routes = (await (await send("GET", "/routes")).json()) as Route[];
++      expect(routes).toEqual([]);
++      const list = (await (await send("GET", "/daily-records?month=2026-11")).json()) as DailyRecord[];
++      expect(list).toHaveLength(1);
++      expect(list[0].workStyle).toMatchObject({
++        kind: "commute",
++        routeId: route.id,
++        route: { name: "自宅↔本社", from: "A駅", to: "B駅", transport: "train", oneWayFare: 220 },
++      });
++    });
++
++    it("消したルートは、新しい記録には選べない", async () => {
++      const route = await createRoute();
++      await send("DELETE", `/routes/${route.id}`);
++      const res = await send("PUT", "/daily-records/2026-11-03", { workStyle: { kind: "commute", routeId: route.id } });
++      expect(res.status).toBe(400);
++    });
++  });
++
+   describe("記録の削除", () => {
+     it("消すと 204 で、一覧から消える（未入力に戻る）", async () => {
+       await send("PUT", "/daily-records/2026-11-02", { workStyle: { kind: "remote" } });

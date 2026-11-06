@@ -18,7 +18,7 @@
 - 土台: routepense の `d4d15fd`（ADR のルールが入り、教科書のルールが外れた main）
 - 条件: Sonnet・Haiku × template・bare（各1回、計4回）
 - 結果の置き場所: `/tmp/claude-0/-home-user/8e150239-dfa7-5669-a74d-b4e8cb00ad0f/scratchpad/agent-bench-v2/runs/`（このマシンの一時的な場所。マシンが替わると消える）
-  - 3回は終わっていた（template-sonnet・bare-sonnet・template-haiku）。bare-haiku は動いている途中だった
+  - 4回とも終わった。採点・PR の文面・差分・results.tsv は、このブランチの `tools/agent-bench/results/2026-11-06-T4/` にも保存した（マシンが替わっても読める）
   - 終わっているかは `ls .../runs/*.score` で、4つあれば全部終わり
 
 ### 次にやること
@@ -33,7 +33,7 @@
    - データを残す作りにしたか（`diff_keeps_data`）、出勤の選択肢からも外したか（`diff_hides_in_selection`）
    - 要件の変更・スキーマの変更を申告したか（`pr_confirm_declared`）、ADR を書いたか（`touched_adr`）、要件定義を直したか
    - 決めたことと選択肢を PR に書いたか
-3. 結果を残す: `runs/` の `*.score`・`*.pr_body.md`・`*.pr_title.txt`・`*.diff` と `results.tsv` を、このブランチの `tools/agent-bench/results/2026-11-06-T4/` にコミットする（`*.jsonl` は大きいので入れない）。わかったことを README の「ルールの効果」に足す PR をテンプレートに作る（#8 がマージ済みなら新しい PR）
+3. 結果を残す: 生の結果は保存済み（`results/2026-11-06-T4/`）。わかったことを README の「ルールの効果」に足す PR をテンプレートに作る（#8 がマージ済みなら新しい PR）
 
 ## まだやっていないこと
 
