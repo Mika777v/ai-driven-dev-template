@@ -42,4 +42,4 @@
 
 ## 開いている PR
 
-- #7・#8・#9 はマージ済み（#9 は T4 の1回目だけ）。T4 の3回分の直しと T2 の節は新しい PR（次の行に番号）
+- #7・#8・#9 はマージ済み（#9 は T4 の1回目だけ）。T4 の3回分の直しと T2 の節は [Mika777v/ai-driven-dev-template#10](https://github.com/Mika777v/ai-driven-dev-template/pull/10)（オーナーの確認待ち）
