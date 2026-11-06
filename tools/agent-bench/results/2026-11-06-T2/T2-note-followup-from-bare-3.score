@@ -1,0 +1,25 @@
+exit	0
+sec_wall	115
+branch	note-limit-and-csv
+branch_ok	1
+branch_named	0
+commits	1
+commits_conventional	0
+uncommitted	0
+files_changed	12
+out_of_scope	1
+touched_requirements	1
+touched_openapi	1
+touched_frontend	1
+touched_textbook	0
+touched_troubleshooting	0
+migration_rewritten	0
+pr_title	日のメモの上限を100文字にし、移動の無い日のメモを CSV に出す
+pr_title_ok	0
+leftover_files	2
+pr_links_issue	0
+typecheck_ok	1
+lint_ok	1
+suite_ok	1
+accept_passed	18
+accept_total	18

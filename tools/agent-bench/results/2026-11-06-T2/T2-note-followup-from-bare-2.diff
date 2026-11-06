@@ -1,0 +1,274 @@
+diff --git a/README.md b/README.md
+index 5cb5de8..d1bad95 100644
+--- a/README.md
++++ b/README.md
+@@ -55,6 +55,7 @@ EKISPERT_API_KEY=届いたキー
+ 月次画面の「CSV で保存」で、表示中の月の交通費の明細を `routepense-YYYY-MM.csv` として保存できます（要件 F7）。
+ 
+ - 1行が1つの移動です（出勤日の通常ルートで1行、追加の移動1件ごとに1行）。金額の列を足すと、画面の月の合計と同じになります
++- 移動の無い日（在宅・休日）でも、日のメモがあれば種別「メモ」の1行が入ります（金額などは空）
+ - 文字コードは UTF-8（BOM 付き）なので、Excel でそのまま開いても文字化けしません
+ - 一括設定の当てはめ中は保存できません（先に登録するか、取り消します）。未入力の日は CSV に入りません
+ 
+diff --git a/backend/src/daily-records/daily-record-router.test.ts b/backend/src/daily-records/daily-record-router.test.ts
+index 52a5633..e51fe70 100644
+--- a/backend/src/daily-records/daily-record-router.test.ts
++++ b/backend/src/daily-records/daily-record-router.test.ts
+@@ -250,10 +250,10 @@ describe("/api/daily-records", () => {
+       expect(record?.extraTrips).toHaveLength(1);
+     });
+ 
+-    it("前後の空白を除いて200文字までは通り、201文字以上・文字列でないときは 400（field は note）", async () => {
+-      expect((await putNote(` ${"あ".repeat(200)} `)).status).toBe(200);
++    it("前後の空白を除いて100文字までは通り、101文字以上・文字列でないときは 400（field は note）", async () => {
++      expect((await putNote(` ${"あ".repeat(100)} `)).status).toBe(200);
+ 
+-      const tooLong = await putNote("あ".repeat(201));
++      const tooLong = await putNote("あ".repeat(101));
+       expect(tooLong.status).toBe(400);
+       expect(await fieldsOf(tooLong)).toEqual(["note"]);
+ 
+@@ -267,7 +267,7 @@ describe("/api/daily-records", () => {
+       expect(await fieldsOf(missing)).toEqual(["note"]);
+ 
+       // 誤りのときは、前のメモを変えない
+-      expect((await listNovember())[0]?.note).toBe("あ".repeat(200));
++      expect((await listNovember())[0]?.note).toBe("あ".repeat(100));
+     });
+ 
+     it("記録が無い日は 404（空を送っても同じ）。実在しない日付は 400", async () => {
+diff --git a/backend/src/daily-records/parse-daily-record-input.test.ts b/backend/src/daily-records/parse-daily-record-input.test.ts
+index b0dd127..cef503d 100644
+--- a/backend/src/daily-records/parse-daily-record-input.test.ts
++++ b/backend/src/daily-records/parse-daily-record-input.test.ts
+@@ -13,9 +13,9 @@ describe("parseNoteInput", () => {
+     expect(parseNoteInput({ note: " 　\t" })).toEqual({ ok: true, value: undefined });
+   });
+ 
+-  it("前後の空白を除いて200文字までは通し、201文字は note のエラー", () => {
+-    expect(parseNoteInput({ note: ` ${"あ".repeat(200)} ` })).toEqual({ ok: true, value: "あ".repeat(200) });
+-    const tooLong = parseNoteInput({ note: "あ".repeat(201) });
++  it("前後の空白を除いて100文字までは通し、101文字は note のエラー", () => {
++    expect(parseNoteInput({ note: ` ${"あ".repeat(100)} ` })).toEqual({ ok: true, value: "あ".repeat(100) });
++    const tooLong = parseNoteInput({ note: "あ".repeat(101) });
+     expect(tooLong.ok ? [] : tooLong.errors.map((e) => e.field)).toEqual(["note"]);
+   });
+ 
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index 214ae6f..ed143a0 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -522,7 +522,7 @@ components:
+           items: { $ref: "#/components/schemas/ExtraTrip" }
+         note:
+           type: string
+-          maxLength: 200
++          maxLength: 100
+           description: その日の自由なメモ。メモが無い日は、プロパティごと付けない
+           example: 健康診断で直帰
+     DailyRecordInput:
+@@ -536,7 +536,7 @@ components:
+       properties:
+         note:
+           type: string
+-          description: 前後の空白を除いて200文字まで。空（空白だけを含む）ならメモを消す
++          description: 前後の空白を除いて100文字まで。空（空白だけを含む）ならメモを消す
+           example: 健康診断で直帰
+ 
+     # shared/src/bulk.ts・bulk-apply.ts
+diff --git a/docs/requirements.md b/docs/requirements.md
+index 08cd2c2..e2544d4 100644
+--- a/docs/requirements.md
++++ b/docs/requirements.md
+@@ -1,7 +1,7 @@
+ # routepense 要件定義
+ 
+ - 作成日: 2026-11-02
+-- 更新日: 2026-11-05（日のメモ F2・U11 を追加）
++- 更新日: 2026-11-06（日のメモの上限を100文字に、移動の無い日のメモを CSV に出す。U12）
+ - 状態: MVP の要件（確定）
+ - 前提: リポジトリ直下の `CLAUDE.md`（技術スタック・設計方針）
+ 
+@@ -43,7 +43,7 @@
+ - 何も選んでいない日（日次記録が無い日）は「**未入力**」と表示し、休日とは区別する。
+ - 1日に使う通常ルートは1つだけ。
+ - 日の記録を消して「未入力」に戻すこともできる。
+-- 日の記録に、自由なメモを付けられる（例: 「健康診断で直帰」「客先の住所が変わった」）。前後の空白を除いて200文字まで。日の編集パネルの「メモを保存」で保存し、空にして保存すると消える。
++- 日の記録に、自由なメモを付けられる（例: 「健康診断で直帰」「客先の住所が変わった」）。前後の空白を除いて100文字まで。日の編集パネルの「メモを保存」で保存し、空にして保存すると消える。
+   - 記録の無い（未入力の）日には付けられない。先に勤務区分を選ぶ。
+   - 勤務区分の保存・一括設定の登録では、メモは消さずに残す。
+ 
+@@ -86,7 +86,9 @@
+ 
+ ### F7. CSV 出力
+ - 月次画面の「CSV で保存」ボタンで、表示中の月の交通費の明細を CSV ファイルとして保存できる。
+-- 1行は1つの移動（明細）。出勤日の通常ルートで1行、追加の移動1件ごとに1行。在宅・休日で追加の移動が無い日、未入力の日は行を作らない（交通費が 0 円の日は、精算への転記に要らないため）。
++- 1行は1つの移動（明細）。出勤日の通常ルートで1行、追加の移動1件ごとに1行。
++- 在宅・休日で追加の移動が無い日は、日のメモ（F2）があるときだけ、種別「メモ」の1行を作る。日付・曜日・祝日・勤務区分・メモを入れ、出発地〜目的の列（金額を含む）は空にする（U12）。
++- メモも移動も無い日、未入力の日は行を作らない（交通費が 0 円の日は、精算への転記に要らないため）。
+ - 列（この順。1行目は見出し）:
+ 
+ | 列 | 中身 | 例 |
+@@ -95,7 +97,7 @@
+ | 曜日 | 月〜日の1文字 | 水 |
+ | 祝日 | 祝日名（祝日でなければ空） | 文化の日 |
+ | 勤務区分 | 在宅 / 出勤 / 休日 | 出勤 |
+-| 種別 | 通常 / 追加 | 通常 |
++| 種別 | 通常 / 追加 / メモ（移動の無い日のメモだけの行） | 通常 |
+ | 出発地 | 区間の出発地 | 自宅 |
+ | 到着地 | 区間の到着地 | 本社 |
+ | 交通手段 | 電車 / バス / その他 | 電車 |
+@@ -106,7 +108,7 @@
+ | 目的 | 追加の移動の目的・メモ（通常は空） | 客先B打合せ |
+ | メモ | 日のメモ（F2）。その日の行のすべてに同じメモを入れる。メモが無ければ空 | 健康診断で直帰 |
+ 
+-- 金額の列の和は、月次画面の月の合計（F5）と必ず一致する。合計の行は CSV に入れない（表計算ソフトで足せるため。転記のときに明細と混ざらないように）。
++- 金額の列の和は、月次画面の月の合計（F5）と必ず一致する（メモの行の金額は空）。合計の行は CSV に入れない（表計算ソフトで足せるため。転記のときに明細と混ざらないように）。
+ - 文字コードは UTF-8（BOM 付き）、改行は CRLF。値にカンマ・改行・`"` があれば `"` で囲む（RFC 4180）。
+ - ファイル名は `routepense-YYYY-MM.csv`（例: `routepense-2026-11.csv`）。
+ - 保存するのは登録済みの記録だけ。一括設定の当てはめ中はボタンを押せない（未登録の内容が混ざらないように）。
+@@ -172,7 +174,7 @@ type WorkStyle =
+ | date | string（YYYY-MM-DD） | 日付。ユーザーごとに1日1件 |
+ | workStyle | WorkStyle | 勤務区分 |
+ | extraTrips | ExtraTrip[] | 追加の移動（0件以上） |
+-| note | string（任意） | 日のメモ（前後の空白を除いて200文字まで）。無い日はプロパティごと付けない |
++| note | string（任意） | 日のメモ（前後の空白を除いて100文字まで）。無い日はプロパティごと付けない |
+ 
+ ### 追加の移動（ExtraTrip）
+ | 項目 | 型の想定 | 説明 |
+@@ -242,3 +244,4 @@ type WorkStyle =
+ | U9 | 祝日の一覧を `shared/` に定数で持つ（年ごとに手で更新）。一括設定には「祝日を除く」のチェック（最初から ON）を置き、除いた日の記録は今のまま残す。カレンダーと表に祝日名を表示する（F3・F5・F6） | 2026-11-02 |
+ | U10 | CSV 出力を足す（F7）。1行 = 1つの移動の明細で、移動の無い日（在宅・休日で追加の移動が無い日、未入力の日）は行を作らない。UTF-8（BOM 付き）・CRLF。CSV の文字列は `shared/` の純粋関数で作り、画面でファイルにする（API は足さない）。当てはめ中は保存できず、未入力の日は入らない | 2026-11-04 |
+ | U11 | 日次記録に自由なメモ（`note`）を足す（F2）。`PUT /api/daily-records/{date}/note` で付ける・直す・消す（空を送ると消す）。勤務区分の保存・一括設定の登録では残す。CSV は最後の列「メモ」に、その日の行のすべてへ同じメモを入れる（移動の無い日は、メモがあっても行を作らない）。表表示にもメモの列を出す | 2026-11-05 |
++| U12 | 日のメモの上限を 200 文字から 100 文字にする（前後の空白を除いて数える）。CSV は、移動の無い日（在宅・休日で追加の移動が無い日）にメモがあれば種別「メモ」の1行を作る（移動の列・金額は空）。U10・U11 の「移動の無い日は行を作らない」を変更 | 2026-11-06 |
+diff --git a/frontend/src/calendar/day-note.test.ts b/frontend/src/calendar/day-note.test.ts
+index a09be39..8bd18d8 100644
+--- a/frontend/src/calendar/day-note.test.ts
++++ b/frontend/src/calendar/day-note.test.ts
+@@ -18,12 +18,12 @@ describe("day-note", () => {
+     expect(isNoteChanged("", { note: "メモ" })).toBe(true);
+   });
+ 
+-  it("前後の空白を除いて200文字までは誤りなし、201文字は誤り", () => {
+-    expect(noteLengthError(` ${"あ".repeat(200)} `)).toBeNull();
+-    expect(noteLengthError("あ".repeat(201))).toBe("メモは200文字以内で入力してください");
++  it("前後の空白を除いて100文字までは誤りなし、101文字は誤り", () => {
++    expect(noteLengthError(` ${"あ".repeat(100)} `)).toBeNull();
++    expect(noteLengthError("あ".repeat(101))).toBe("メモは100文字以内で入力してください");
+   });
+ 
+   it("文字数は前後の空白を除いて数える", () => {
+-    expect(noteCount(" 直帰 ")).toBe("2 / 200");
++    expect(noteCount(" 直帰 ")).toBe("2 / 100");
+   });
+ });
+diff --git a/frontend/src/calendar/day-note.ts b/frontend/src/calendar/day-note.ts
+index 920ac0c..020a555 100644
+--- a/frontend/src/calendar/day-note.ts
++++ b/frontend/src/calendar/day-note.ts
+@@ -20,7 +20,7 @@ export function noteLengthError(value: string): string | null {
+   return normalizeNote(value).length > MAX_NOTE ? `メモは${MAX_NOTE}文字以内で入力してください` : null;
+ }
+ 
+-/** 欄の下に出す文字数（例: 12 / 200） */
++/** 欄の下に出す文字数（例: 12 / 100） */
+ export function noteCount(value: string): string {
+   return `${normalizeNote(value).length} / ${MAX_NOTE}`;
+ }
+diff --git a/shared/src/csv.test.ts b/shared/src/csv.test.ts
+index 11bf834..6843680 100644
+--- a/shared/src/csv.test.ts
++++ b/shared/src/csv.test.ts
+@@ -72,8 +72,27 @@ describe("monthCsvRows", () => {
+     ]);
+   });
+ 
+-  it("メモがあっても、移動の無い日（在宅・休日で追加の移動が無い日）は行を作らない", () => {
+-    expect(monthCsvRows([record("2026-11-05", { kind: "remote" }, [], "客先の住所が変わった")])).toEqual([]);
++  it("移動の無い日（在宅・休日で追加の移動が無い日）にメモがあれば、種別「メモ」の1行を作る。移動の列は空", () => {
++    expect(
++      monthCsvRows([
++        record("2026-11-05", { kind: "remote" }, [], "客先の住所が変わった"),
++        record("2026-11-03", { kind: "holiday" }, [], "祝日出勤の振替"),
++      ]),
++    ).toEqual([
++      ["2026-11-03", "火", "文化の日", "休日", "メモ", "", "", "", "", "", "", "", "", "祝日出勤の振替"],
++      ["2026-11-05", "木", "", "在宅", "メモ", "", "", "", "", "", "", "", "", "客先の住所が変わった"],
++    ]);
++  });
++
++  it("移動のある日は、メモがあってもメモの行を足さない", () => {
++    const rows = monthCsvRows([
++      record("2026-11-04", commute, [], "直帰"),
++      record("2026-11-05", { kind: "remote" }, [trip()], "客先へ"),
++    ]);
++    expect(rows.map((row) => [row[0], row[4], row[13]])).toEqual([
++      ["2026-11-04", "通常", "直帰"],
++      ["2026-11-05", "追加", "客先へ"],
++    ]);
+   });
+ 
+   it("祝日は祝日名を入れる（勤務区分はそのまま）", () => {
+@@ -86,7 +105,9 @@ describe("monthCsvRows", () => {
+       record("2026-11-03", { kind: "holiday" }, [trip()]),
+       record("2026-11-04", { kind: "remote" }),
+       record("2026-11-05", commute),
++      record("2026-11-06", { kind: "remote" }, [], "メモだけの日"),
+     ];
++    // メモの行の金額は空（Number("") は 0）なので、和は変わらない
+     const sum = monthCsvRows(records).reduce((acc, row) => acc + Number(row[10]), 0);
+     expect(sum).toBe(monthlyFare(records).total);
+   });
+@@ -120,6 +141,11 @@ describe("monthCsv", () => {
+     ]);
+   });
+ 
++  it("メモの行は、移動の列が空のまま並ぶ", () => {
++    const csv = monthCsv([record("2026-11-05", { kind: "remote" }, [], "在宅, 午後休")]);
++    expect(csv.slice(UTF8_BOM.length).split("\r\n")[1]).toBe('2026-11-05,木,,在宅,メモ,,,,,,,,,"在宅, 午後休"');
++  });
++
+   it("記録が無い月は見出しだけ", () => {
+     expect(monthCsv([])).toBe(`${UTF8_BOM}${CSV_HEADER.join(",")}\r\n`);
+   });
+diff --git a/shared/src/csv.ts b/shared/src/csv.ts
+index 0e24f69..86c6017 100644
+--- a/shared/src/csv.ts
++++ b/shared/src/csv.ts
+@@ -8,8 +8,10 @@ import type { WorkStyleKind } from "./work-style";
+ 
+ /**
+  * 月の明細の CSV（要件定義 F7・U10）。
+- * 1行 = 1つの移動。出勤日の通常ルートで1行、追加の移動1件ごとに1行。移動の無い日は行を作らない。
+- * 最後の列「メモ」は日のメモ。その日の行のすべてに、同じメモを入れる（メモがあっても、移動の無い日は行を作らない）。
++ * 1行 = 1つの移動。出勤日の通常ルートで1行、追加の移動1件ごとに1行。
++ * 最後の列「メモ」は日のメモ。その日の行のすべてに、同じメモを入れる。
++ * 移動の無い日（在宅・休日で追加の移動が無い日）は、メモがあれば種別「メモ」の1行だけを作る（金額などは空）。
++ * メモも移動も無い日は行を作らない。
+  * 画面からも backend からも同じ結果になるよう、shared の純粋関数にしている。
+  */
+ 
+@@ -87,6 +89,10 @@ function recordRows(record: CsvRecord): CsvRow[] {
+       note,
+     ]);
+   }
++  if (rows.length === 0 && note !== "") {
++    // 移動の無い日のメモだけの行。金額の列は空なので、金額の列の和（= 月の合計）は変わらない
++    rows.push([...day, "メモ", "", "", "", "", "", "", "", "", note]);
++  }
+   return rows;
+ }
+ 
+diff --git a/shared/src/daily-record.ts b/shared/src/daily-record.ts
+index 492fe17..441db4f 100644
+--- a/shared/src/daily-record.ts
++++ b/shared/src/daily-record.ts
+@@ -20,7 +20,7 @@ export type DailyRecordInput = {
+ };
+ 
+ /** メモの長さの上限（前後の空白を除いた文字数） */
+-export const MAX_NOTE = 200;
++export const MAX_NOTE = 100;
+ 
+ /** PUT /api/daily-records/:date/note の本文。空（空白だけを含む）ならメモを消す */
+ export type DailyRecordNoteInput = {

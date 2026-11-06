@@ -14,21 +14,21 @@
 
 ## T4（仕様の曖昧な Task）— 終わった
 
-- 4回（Sonnet・Haiku × template・bare）の読み比べは [results/2026-11-06-T4/README.md](results/2026-11-06-T4/README.md)
-- 要点: ルールが無いと、Sonnet も Haiku も黙って DB のスキーマと要件定義を変えた。ルールのある Sonnet は作らずに聞き、ルールのある Haiku は作ったうえで申告して ADR を書いた（AI が ADR を書いたのは初めて）
+- 12回（Sonnet・Haiku × template・bare × 3回）の読み比べは [results/2026-11-06-T4/README.md](results/2026-11-06-T4/README.md)
+- 要点: スキーマと要件定義を変えた回で「確認が必要な項目」に申告したのは、ルールあり 5/5・ルールなし 0/6。「ルールのある Sonnet が作らずに聞く」は 1/3 だけ。ルールなしの Haiku も 2/3 で ADR を書いた（`docs/adr/README.md` に書くときのルールがあり、ルールなしの条件でも消していないため）
 - テンプレートの README「ルールの効果」に節を足す PR を出した（下の「開いている PR」）
 - 採点の直しどころ: `diff_hides_in_selection` は「カレンダーの画面を変えたか」だけで見ているので、API の既定で除く作りを見落とす。Sonnet・template の `typecheck_ok=0` は原因が未確認
 
 ## T2（続きの Task）— 終わった
 
-- 2回（from-template・from-bare、Opus、各1回）の読み比べは [results/2026-11-06-T2/README.md](results/2026-11-06-T2/README.md)
+- 6回（from-template・from-bare、Opus、各3回）の読み比べは [results/2026-11-06-T2/README.md](results/2026-11-06-T2/README.md)
 - 要点: 続きの AI はルールを知らなくても、前の作業が残した物（コミットのメッセージ = 前の PR の本文・PROGRESS.md・手順書）を真似た。前がルールありなら、形のそろったコミットと PR・要件定義の変更の申告・文書の更新まで引き継がれた。前がルールなしなら、どれも引き継がれなかった。正しさ（18/18）と費用（約1.06倍）はほぼ同じ
 - 採点の直しどころ: `leftover_files` は決定の記録の「200 文字から 100 文字に」も数えるので差を見分けない。`SCOPE_RE` にルートの `README.md` が無い
 
 ## まだやっていないこと
 
 - T2 の発展: 続きの AI もルールありの条件（from-template をルールありで続ける）と比べる
-- 各条件を複数回に増やして、ばらつきを見る（特に T4 の「ルールのある Sonnet が作らずに聞く」が毎回起きるか）。T4 を Opus でも動かす
+- T4 を Opus でも動かす。T4 で `docs/adr/README.md` も消した「本当にルールの無い」条件と比べる
 - 「足した ADR のルールで、AI が実際に ADR を書くか」の確認（T3 を新しい土台 `d4d15fd` で動かす）。T4 では Haiku・template が書いた
 
 ## 道具の場所
@@ -42,4 +42,4 @@
 
 ## 開いている PR
 
-- [Mika777v/ai-driven-dev-template#9](https://github.com/Mika777v/ai-driven-dev-template/pull/9)（README に T4・T2 の結果）— オーナーの確認待ち。#7・#8 はマージ済み
+- #7・#8・#9 はマージ済み（#9 は T4 の1回目だけ）。T4 の3回分の直しと T2 の節は新しい PR（次の行に番号）

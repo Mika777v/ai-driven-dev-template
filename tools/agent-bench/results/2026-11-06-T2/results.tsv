@@ -1,3 +1,7 @@
 run	tools	turns	tokens	cost_usd	sec	accept_passed	accept_total	suite_ok	typecheck_ok	lint_ok	branch_ok	branch_named	commits_conventional	uncommitted	pr_title_ok	pr_sections_ok	pr_confirm_declared	pr_links_issue	touched_textbook	touched_openapi	touched_frontend	touched_troubleshooting	touched_progress	migration_rewritten	out_of_scope	files_changed
 T2-note-followup-from-bare-1	12	13	656662	0.6196214	113	18	18	1	1	1	1	0	0	0	0			0	0	1	1	0		0	0	11
+T2-note-followup-from-bare-2	9	10	459735	0.5246940000000001	105	18	18	1	1	1	1	0	0	0	0			0	0	1	1	0		0	1	12
+T2-note-followup-from-bare-3	12	13	712709	0.665666	114	18	18	1	1	1	1	0	0	0	0			0	0	1	1	0		0	1	12
 T2-note-followup-from-template-1	11	12	698544	0.9283056	127	18	18	1	1	1	1	1	1	0	1			0	1	1	1	1		0	1	14
+T2-note-followup-from-template-2	10	11	644955	0.6590816	121	18	18	1	1	1	1	1	1	0	1			0	0	1	1	1		0	1	13
+T2-note-followup-from-template-3	13	14	825737	0.7392732	128	18	18	1	1	1	1	1	1	0	1			0	1	1	1	1		0	1	14

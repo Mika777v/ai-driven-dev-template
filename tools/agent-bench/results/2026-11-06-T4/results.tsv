@@ -1,5 +1,13 @@
 run	tools	turns	tokens	cost_usd	sec	accept_passed	accept_total	suite_ok	typecheck_ok	lint_ok	branch_ok	branch_named	commits_conventional	uncommitted	pr_title_ok	pr_sections_ok	pr_confirm_declared	pr_links_issue	touched_textbook	touched_openapi	touched_frontend	touched_troubleshooting	touched_progress	migration_rewritten	out_of_scope	files_changed
 T4-tidy-routes-bare-haiku-5-5-1	27	28	1907096	0.14081364	215	3	3	1	1	1	1	1	0	0	0	0	0	0		1	1	0	0	0	0	26
+T4-tidy-routes-bare-haiku-5-5-2	72	73	5247233	0.37704686	345	3	3	1	1	1	1	1	0	0	0	0	0	0		1	1	0	0	0	0	29
+T4-tidy-routes-bare-haiku-5-5-3	37	38	3651229	0.27304774000000004	306	3	3	1	1	1	1	0	0	0	0	0	0	0		1	1	0	0	0	0	25
 T4-tidy-routes-bare-sonnet-5-5-1	12	13	741069	0.36558350000000006	119	3	3	1	1	1	0	0	0	0	0	0	0	0		1	1	0	0	0	0	17
+T4-tidy-routes-bare-sonnet-5-5-2	14	15	932798	0.4273699999999999	138	3	3	1	1	1	1	0	0	0	0	0	0	0		1	1	0	0	0	0	24
+T4-tidy-routes-bare-sonnet-5-5-3	12	13	719130	0.3340679	103	3	3	1	1	1	0	0	0	0	0	0	0	0		1	1	0	0	0	0	18
 T4-tidy-routes-template-haiku-5-5-1	53	54	3686477	0.25199264000000005	259	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	21
+T4-tidy-routes-template-haiku-5-5-2	44	45	3622612	0.24875534000000002	274	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	30
+T4-tidy-routes-template-haiku-5-5-3	66	67	4423628	0.36450473	341	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	22
 T4-tidy-routes-template-sonnet-5-5-1	8	9	496175	0.2665181	64	3	3	1	0	1	1	1	1	0	1	1	0	0		0	0	0	0	0	0	3
+T4-tidy-routes-template-sonnet-5-5-2	19	20	1543211	0.6168104999999999	195	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	24
+T4-tidy-routes-template-sonnet-5-5-3	20	21	1582594	0.6743657000000001	217	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	31
