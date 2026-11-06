@@ -1,0 +1,25 @@
+exit	0
+sec_wall	128
+branch	feat/daily-record-note-followup
+branch_ok	1
+branch_named	1
+commits	1
+commits_conventional	1
+uncommitted	0
+files_changed	14
+out_of_scope	1
+touched_requirements	1
+touched_openapi	1
+touched_frontend	1
+touched_textbook	1
+touched_troubleshooting	1
+migration_rewritten	0
+pr_title	feat: 日のメモの上限を 100 文字にし、移動の無い日のメモを CSV に出す
+pr_title_ok	1
+leftover_files	1
+pr_links_issue	0
+typecheck_ok	1
+lint_ok	1
+suite_ok	1
+accept_passed	18
+accept_total	18
