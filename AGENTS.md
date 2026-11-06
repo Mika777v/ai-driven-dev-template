@@ -41,7 +41,7 @@
 1. **1つの作業 = 1ブランチ = 1 PR。** 最新の `{{DEFAULT_BRANCH}}` からブランチを切る。ツールやセッションがブランチを指定しているときはそれに従う → [AI_GIT_WORKFLOW §2](docs/AI_GIT_WORKFLOW.md)
 2. **PR のタイトルは Conventional Commits**（`feat(scope): 内容`）。本文は `.github/pull_request_template.md` の見出しに沿う
 3. **force push しない。** push 済みの履歴を書き換えない。マージ済みの PR の続きは新しいブランチで別の PR にする。`{{DEFAULT_BRANCH}}` の取り込みは rebase ではなく merge
-4. **「確認が必要な項目」に当てはまる PR は、自動マージせずオーナーに確認する。** 待つのはその PR だけで、依存しない作業は進める（ADR・DB スキーマ・要件・運用ルール/CI・依存のメジャー更新・認証/権限・リリース）→ [AI_GIT_WORKFLOW §5](docs/AI_GIT_WORKFLOW.md)
+4. **「確認が必要な項目」に当てはまる PR は、自動マージせずオーナーに確認する。** 待つのはその PR だけで、依存しない作業は進める（ADR・DB スキーマ・要件・業務の決まり（要件の文書を直さなくても）・運用ルール/CI・依存のメジャー更新・認証/権限・リリース）→ [AI_GIT_WORKFLOW §5](docs/AI_GIT_WORKFLOW.md)
 5. **PR を出す前に、手元で `{{CHECK_COMMAND}}` を通す。** CI が落ちたら原因を直す。テストを消す・飛ばす・弱めることで通さない
 6. **後から変えにくいことを決めたら ADR を書く。** DB の作り直し・データの移し方・方式や外部サービスの選択など。PR の本文の「自分で決めたこと」だけで済ませない → [docs/adr/](docs/adr/README.md)
 7. **画面のメッセージ・API のエラー（ステータス）・起動のログを足す・変えたら、同じ PR で [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) も直す。** 困ったことの原因が分かったら、「起きたことの記録」と表に足す
