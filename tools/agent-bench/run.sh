@@ -204,6 +204,11 @@ cmd_dry() {
 }
 
 # ---- 測る -----------------------------------------------------------------------
+# 利用枠の上限で止まった回か（止まった回は採点せず、結果を残さない。次の run でやり直す）
+hit_limit() {
+  jq -e -s 'map(select(.type == "result")) | last | (.is_error == true) and ((.result // "") | test("limit"; "i"))' "$1" >/dev/null 2>&1
+}
+
 cmd_run() {
   [ -d "$OUT/base" ] || die "先に prepare を実行してください"
   command -v claude >/dev/null || die "claude（Claude Code の CLI）がありません"
@@ -228,6 +233,9 @@ cmd_run() {
           --setting-sources project,local --strict-mcp-config --no-session-persistence \
           --max-budget-usd "$MAX_BUDGET" --model "$BENCH_SPEC_MODEL" \
           < /dev/null > "$OUT/runs/$tag.spec.jsonl" 2> "$OUT/runs/$tag.spec.err")
+        if hit_limit "$OUT/runs/$tag.spec.jsonl"; then
+          rm -rf "$ws" "$OUT/runs/$tag".*; die "利用枠の上限で止まった（$tag）。上限が戻ってから run をもう一度"
+        fi
         cp "$ws/SPEC.md" "$OUT/runs/$tag.spec.md" 2>/dev/null || info "   SPEC.md が書かれなかった"
         # 要件の段階が触った物は戻す（実装の段階は、同じ土台から始める）
         (cd "$ws" && git status --porcelain > "$OUT/runs/$tag.spec.touched" && git reset -q --hard bench-start && git clean -qfd)
@@ -244,6 +252,9 @@ cmd_run() {
         < /dev/null > "$OUT/runs/$tag.jsonl" 2> "$OUT/runs/$tag.err")
       status=$?
       end=$(date +%s)
+      if hit_limit "$OUT/runs/$tag.jsonl"; then
+        rm -rf "$ws" "$OUT/runs/$tag".*; die "利用枠の上限で止まった（$tag）。上限が戻ってから run をもう一度"
+      fi
       info "   採点する"
       { printf 'exit\t%s\nsec_wall\t%s\n' "$status" "$((end - start))"
         bash "$HERE/score.sh" "$ws" "$TASK"; } > "$OUT/runs/$tag.score" 2> "$OUT/runs/$tag.score.err"

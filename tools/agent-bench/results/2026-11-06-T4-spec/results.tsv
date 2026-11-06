@@ -2,3 +2,6 @@ run	tools	turns	tokens	cost_usd	sec	accept_passed	accept_total	suite_ok	typechec
 T4-tidy-routes-template-spec-opus-5-5-sonnet-5-5-1	17	18	1367852	0.7475166	171	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	29
 T4-tidy-routes-template-spec-opus-5-5-sonnet-5-5-2	20	21	1507068	0.6538263999999999	179	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	30
 T4-tidy-routes-template-spec-opus-5-5-sonnet-5-5-3	27	28	2535322	0.9344323	270	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	30
+T4-tidy-routes-template-spec-sonnet-5-5-sonnet-5-5-1	28	29	2509190	0.9122517	285	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	33
+T4-tidy-routes-template-spec-sonnet-5-5-sonnet-5-5-2	31	32	2848412	1.1473587	312	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	35
+T4-tidy-routes-template-spec-sonnet-5-5-sonnet-5-5-3	29	30	2489914	0.9177619999999997	282	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	32

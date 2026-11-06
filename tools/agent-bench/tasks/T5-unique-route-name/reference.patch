@@ -1,0 +1,19 @@
+diff --git a/backend/src/routes/route-router.ts b/backend/src/routes/route-router.ts
+index d4b176b..2c6df60 100644
+--- a/backend/src/routes/route-router.ts
++++ b/backend/src/routes/route-router.ts
+@@ -21,6 +21,14 @@ export function routeRouter(repo: RouteRepository, userId: string): Router {
+       res.status(400).json(body);
+       return;
+     }
++    if (repo.list(userId).some((r) => r.name === parsed.value.name)) {
++      const body: ApiError = {
++        error: "同じ名前のルートがあります",
++        fieldErrors: [{ field: "name", message: "同じ名前のルートがあります" }],
++      };
++      res.status(409).json(body);
++      return;
++    }
+     res.status(201).json(repo.create(userId, parsed.value));
+   });
+ 

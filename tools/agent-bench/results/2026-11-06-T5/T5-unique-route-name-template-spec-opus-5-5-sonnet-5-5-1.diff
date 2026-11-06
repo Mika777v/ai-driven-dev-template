@@ -1,0 +1,352 @@
+diff --git a/backend/src/routes/route-repository.ts b/backend/src/routes/route-repository.ts
+index 0e40520..dc5da13 100644
+--- a/backend/src/routes/route-repository.ts
++++ b/backend/src/routes/route-repository.ts
+@@ -8,6 +8,8 @@ import type { Route, RouteInput } from "@routepense/shared";
+ export interface RouteRepository {
+   list(userId: string): Route[];
+   get(userId: string, id: string): Route | undefined;
++  /** 名前が完全に同じルート（0件以上。すでに重なっているデータがあるので配列） */
++  findByName(userId: string, name: string): Route[];
+   create(userId: string, input: RouteInput): Route;
+   /** 見つからなければ undefined */
+   update(userId: string, id: string, input: RouteInput): Route | undefined;
+diff --git a/backend/src/routes/route-router.test.ts b/backend/src/routes/route-router.test.ts
+index db635b1..434dc20 100644
+--- a/backend/src/routes/route-router.test.ts
++++ b/backend/src/routes/route-router.test.ts
+@@ -1,6 +1,13 @@
+ import type { ApiError, Route, RouteInput } from "@routepense/shared";
+ import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import type { Server } from "node:http";
++import type { AddressInfo } from "node:net";
++import { createApp } from "../app";
++import { SqliteDailyRecordRepository } from "../daily-records/sqlite-daily-record-repository";
++import { openDatabase } from "../db/database";
++import { UnavailableRouteSearch } from "../route-search/unavailable-route-search";
+ import { startTestServer } from "../test-server";
++import { SqliteRouteRepository } from "./sqlite-route-repository";
+ 
+ const input: RouteInput = {
+   name: "自宅↔本社",
+@@ -84,4 +91,94 @@ describe("/api/routes", () => {
+     expect((await send("DELETE", `/${created.id}`)).status).toBe(204);
+     expect(await (await send("GET", "")).json()).toEqual([]);
+   });
++
++  describe("名前の重なり", () => {
++    const duplicate: ApiError = {
++      error: "同じ名前のルートがあります",
++      fieldErrors: [{ field: "name", message: "同じ名前のルートがあります" }],
++    };
++    const count = async () => ((await (await send("GET", "")).json()) as Route[]).length;
++
++    it("同じ名前で登録すると 409 で、ルートは増えない", async () => {
++      await send("POST", "", input);
++      const res = await send("POST", "", { ...input, from: "C駅" });
++      expect(res.status).toBe(409);
++      expect(await res.json()).toEqual(duplicate);
++      expect(await count()).toBe(1);
++    });
++
++    it("前後に空白（全角を含む）を付けた同じ名前も 409", async () => {
++      await send("POST", "", input);
++      const res = await send("POST", "", { ...input, name: `\u3000 ${input.name} ` });
++      expect(res.status).toBe(409);
++      expect(await count()).toBe(1);
++    });
++
++    it("違う名前（大文字小文字・記号だけの違いを含む）なら 201", async () => {
++      await send("POST", "", { ...input, name: "Home" });
++      expect((await send("POST", "", { ...input, name: "home" })).status).toBe(201);
++      expect((await send("POST", "", input)).status).toBe(201);
++      expect((await send("POST", "", { ...input, name: "自宅<->本社" })).status).toBe(201);
++      expect(await count()).toBe(4);
++    });
++
++    it("名前が重なっていても、ほかの項目の誤りがあれば 400 が先", async () => {
++      await send("POST", "", input);
++      const res = await send("POST", "", { ...input, oneWayFare: -1 });
++      expect(res.status).toBe(400);
++    });
++
++    it("消したルートの名前は、また登録できる", async () => {
++      const created = (await (await send("POST", "", input)).json()) as Route;
++      await send("DELETE", `/${created.id}`);
++      expect((await send("POST", "", input)).status).toBe(201);
++    });
++
++    it("編集で、ほかのルートと同じ名前に変えると 409 で、ルートは変わらない", async () => {
++      await send("POST", "", input);
++      const other = (await (await send("POST", "", { ...input, name: "別" })).json()) as Route;
++
++      const res = await send("PUT", `/${other.id}`, input);
++      expect(res.status).toBe(409);
++      expect(await res.json()).toEqual(duplicate);
++      const list = (await (await send("GET", "")).json()) as Route[];
++      expect(list.find((r) => r.id === other.id)?.name).toBe("別");
++    });
++
++    it("編集で名前を変えずに運賃だけ直すと 200", async () => {
++      const created = (await (await send("POST", "", input)).json()) as Route;
++      const res = await send("PUT", `/${created.id}`, { ...input, oneWayFare: 300 });
++      expect(res.status).toBe(200);
++    });
++
++    it("無い id の編集は、名前が重なっていても 404", async () => {
++      await send("POST", "", input);
++      expect((await send("PUT", "/missing", input)).status).toBe(404);
++    });
++  });
++
++  describe("すでに同じ名前が2件あるデータ", () => {
++    it("名前を変えずに編集すると 200（重ならない名前への変更も 200）", async () => {
++      const db = openDatabase(":memory:");
++      const routes = new SqliteRouteRepository(db);
++      const a = routes.create("test-user", input);
++      routes.create("test-user", input);
++      const server: Server = createApp({
++        routes,
++        dailyRecords: new SqliteDailyRecordRepository(db),
++        routeSearch: new UnavailableRouteSearch(),
++        userId: "test-user",
++      }).listen(0);
++      try {
++        const base = `http://localhost:${(server.address() as AddressInfo).port}/api/routes/${a.id}`;
++        const put = (body: RouteInput) =>
++          fetch(base, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
++        expect((await put({ ...input, oneWayFare: 300 })).status).toBe(200);
++        expect((await put({ ...input, name: "自宅↔本社（バス）" })).status).toBe(200);
++      } finally {
++        server.close();
++        db.close();
++      }
++    });
++  });
+ });
+diff --git a/backend/src/routes/route-router.ts b/backend/src/routes/route-router.ts
+index d4b176b..46206e9 100644
+--- a/backend/src/routes/route-router.ts
++++ b/backend/src/routes/route-router.ts
+@@ -5,6 +5,13 @@ import type { RouteRepository } from "./route-repository";
+ 
+ const notFound: ApiError = { error: "ルートが見つかりません" };
+ 
++const DUPLICATE_NAME_MESSAGE = "同じ名前のルートがあります";
++/** ほかのルートと名前が重なるときの 409 の本文（登録と編集で同じ） */
++const duplicateName: ApiError = {
++  error: DUPLICATE_NAME_MESSAGE,
++  fieldErrors: [{ field: "name", message: DUPLICATE_NAME_MESSAGE }],
++};
++
+ /** /api/routes の API。ルートの一覧・登録・編集・削除 */
+ export function routeRouter(repo: RouteRepository, userId: string): Router {
+   const router = Router();
+@@ -21,6 +28,10 @@ export function routeRouter(repo: RouteRepository, userId: string): Router {
+       res.status(400).json(body);
+       return;
+     }
++    if (repo.findByName(userId, parsed.value.name).length > 0) {
++      res.status(409).json(duplicateName);
++      return;
++    }
+     res.status(201).json(repo.create(userId, parsed.value));
+   });
+ 
+@@ -31,6 +42,19 @@ export function routeRouter(repo: RouteRepository, userId: string): Router {
+       res.status(400).json(body);
+       return;
+     }
++    const current = repo.get(userId, req.params.id);
++    if (!current) {
++      res.status(404).json(notFound);
++      return;
++    }
++    // 名前を変えるときだけ見る（すでに重なっているルートも、名前を変えない編集は通す）
++    if (
++      parsed.value.name !== current.name &&
++      repo.findByName(userId, parsed.value.name).some((r) => r.id !== current.id)
++    ) {
++      res.status(409).json(duplicateName);
++      return;
++    }
+     const updated = repo.update(userId, req.params.id, parsed.value);
+     if (!updated) {
+       res.status(404).json(notFound);
+diff --git a/backend/src/routes/sqlite-route-repository.test.ts b/backend/src/routes/sqlite-route-repository.test.ts
+index a192ae6..eaee390 100644
+--- a/backend/src/routes/sqlite-route-repository.test.ts
++++ b/backend/src/routes/sqlite-route-repository.test.ts
+@@ -36,6 +36,16 @@ describe("SqliteRouteRepository", () => {
+     expect(repo.get("user-1", created.id)).toEqual(created);
+   });
+ 
++  it("findByName は同じユーザーの同じ名前だけを返す", () => {
++    const a = repo.create("user-1", input);
++    const b = repo.create("user-1", input);
++    repo.create("user-1", { ...input, name: "別名" });
++    repo.create("user-2", input);
++
++    expect(repo.findByName("user-1", input.name)).toEqual([a, b]);
++    expect(repo.findByName("user-1", "ない名前")).toEqual([]);
++  });
++
+   it("一覧は登録した順に並ぶ", () => {
+     const a = repo.create("user-1", { ...input, name: "A" });
+     const b = repo.create("user-1", { ...input, name: "B" });
+diff --git a/backend/src/routes/sqlite-route-repository.ts b/backend/src/routes/sqlite-route-repository.ts
+index f304c71..135bbed 100644
+--- a/backend/src/routes/sqlite-route-repository.ts
++++ b/backend/src/routes/sqlite-route-repository.ts
+@@ -52,6 +52,13 @@ export class SqliteRouteRepository implements RouteRepository {
+     return row ? toRoute(row) : undefined;
+   }
+ 
++  findByName(userId: string, name: string): Route[] {
++    const rows = this.db
++      .prepare(`SELECT ${COLUMNS} FROM routes WHERE user_id = ? AND name = ? ORDER BY created_at, id`)
++      .all(userId, name) as RouteRow[];
++    return rows.map(toRoute);
++  }
++
+   create(userId: string, input: RouteInput): Route {
+     const id = randomUUID();
+     const at = this.now().toISOString();
+diff --git a/docs/PROGRESS.md b/docs/PROGRESS.md
+index 33182cc..715a115 100644
+--- a/docs/PROGRESS.md
++++ b/docs/PROGRESS.md
+@@ -3,7 +3,7 @@
+ 新しいセッションは、`CLAUDE.md` の次にこのファイルを読んで続きを始める。
+ セッションを終える前に、このファイルを更新して PR にする（`docs/DEV_RULES.md`「セッションとコンテキストの使い方」）。
+ 
+-- 最終更新: 2026-11-04
++- 最終更新: 2026-11-06
+ 
+ ## ステップ（docs/DEV_RULES.md「進め方」）と Epic
+ 
+@@ -51,6 +51,8 @@
+ 
+ ## 会話で決めたこと（ほかの文書に無いもの）
+ 
++- **ルート名を重ねない**（2026-11-06、U11）: 登録と、名前を変える編集で、ほかのルートと同じ名前なら 409。DB の制約は張らない。オーナーの手元にある「自宅↔本社」2件は手で名前を直す（データは書き換えない）。要件定義を変えるため、PR は自動マージせずオーナーの確認待ち
++
+ - **ADR を書くきっかけを決めた**（2026-11-05）: 後から変えにくいこと（DB の作り直し・データの移し方・方式の選択など）を決めたら、迷わずに決めたことでも ADR を書く。テンプレートのベンチマークで、AI が ADR を一度も書かず、説明が PR の本文と教科書に散らばったため（テンプレートの #7 と同じルール）
+ - **教科書を必ず書く決まりを外した**（2026-11-05）: 機能を実装するたびに教科書の章を書く決まりは、今は要らないとオーナーが決めた。今ある章は残し、書きたいときは書いてよい。テンプレートのベンチマークで、この決まりが作業の量を増やしていた（教科書の章を書く分）ことも理由の1つ
+ - **CLAUDE.md を短くした**（2026-11-04）: 毎回読み込まれる `CLAUDE.md` を、毎回守る要点と「いつ何を読むか」だけにし（約 10.8KB → 3.3KB）、作業の決まりの全文は `docs/DEV_RULES.md` に移した。テンプレートの errnav のベンチマーク（[ai-driven-dev-template#3](https://github.com/Mika777v/ai-driven-dev-template/pull/3)）で、短くすると1ターンあたり約1割（約3,400トークン）減ることを見たため。`bench/errnav-bugs` ブランチは、そのベンチマーク用の不具合（main には入れない）
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index dfe3a6f..b5567d6 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -74,6 +74,7 @@ paths:
+             application/json:
+               schema: { $ref: "#/components/schemas/Route" }
+         "400": { $ref: "#/components/responses/BadRequest" }
++        "409": { $ref: "#/components/responses/Conflict" }
+ 
+   /api/routes/{id}:
+     parameters:
+@@ -96,6 +97,7 @@ paths:
+               schema: { $ref: "#/components/schemas/Route" }
+         "400": { $ref: "#/components/responses/BadRequest" }
+         "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/Conflict" }
+     delete:
+       tags: [routes]
+       summary: ルートを削除する
+@@ -325,6 +327,15 @@ components:
+             error: 入力に誤りがあります
+             fieldErrors:
+               - { field: oneWayFare, message: 片道運賃は0以上の整数（円）で入力してください }
++    Conflict:
++      description: ほかのルートと名前が同じ（前後の空白を除いて完全に同じ）。編集では、名前を変えるときだけ
++      content:
++        application/json:
++          schema: { $ref: "#/components/schemas/ApiError" }
++          example:
++            error: 同じ名前のルートがあります
++            fieldErrors:
++              - { field: name, message: 同じ名前のルートがあります }
+     NotFound:
+       description: 対象が見つからない
+       content:
+diff --git a/docs/requirements.md b/docs/requirements.md
+index b4986f2..a7bf07d 100644
+--- a/docs/requirements.md
++++ b/docs/requirements.md
+@@ -1,7 +1,7 @@
+ # routepense 要件定義
+ 
+ - 作成日: 2026-11-02
+-- 更新日: 2026-11-04（CSV 出力 F7・U10 を追加）
++- 更新日: 2026-11-06（ルート名の重なり U11 を追加）
+ - 状態: MVP の要件（確定）
+ - 前提: リポジトリ直下の `CLAUDE.md`（技術スタック・設計方針）
+ 
+@@ -31,6 +31,7 @@
+ - 項目: ルート名、出発地、到着地、交通手段（電車 / バス / その他）、片道運賃。
+ - 運賃は手で入力する（運賃の自動計算はしない）。
+ - 経路の参照（U1）: 出発駅・到着駅を入れると、駅すぱあとの経路結果のページを開ける。そのページの URL をルートに残せる（任意。手でも直せる）。API のキーが無い環境では、この機能は出さない。
++- ルート名は重ならないようにする。同じ名前（前後の空白を除いて完全に同じ）のルートは登録できず、編集でほかのルートと同じ名前に変えることもできない。消したルートの名前は使える（U11）。
+ - ルートを編集すると、その後に作る記録から新しい値が使われる。
+ - ルートを編集・削除しても、過去の日次記録の金額と区間は変わらない（記録にその時点の値をコピーしているため。→ 5. データの項目）。
+ 
+@@ -201,6 +202,7 @@ type WorkStyle =
+ - 曜日の条件が1つ以上選ばれていること。
+ - 一括設定の「祝日を除く」が true / false であること。
+ - 運賃が 0 以上の整数であること。
++- ルート名が、ほかのルートと重ならないこと（前後の空白を除いて完全一致。編集では名前を変えるときだけ。重なれば 409）。
+ - 出勤の `routeId` が登録済みのルートであること（記録を作る時点で確認する）。
+ 
+ ## 6. スコープ外
+@@ -236,3 +238,4 @@ type WorkStyle =
+ | U1 | 有料の API は使わない。運賃は手で入れたまま、駅すぱあと API のフリープランで経路結果のページの URL をルートに付けられるようにする。経路検索は backend のインターフェースの後ろに置き、後から運賃も返す API に替えられるようにする（F1・ADR-0002） | 2026-11-02 |
+ | U9 | 祝日の一覧を `shared/` に定数で持つ（年ごとに手で更新）。一括設定には「祝日を除く」のチェック（最初から ON）を置き、除いた日の記録は今のまま残す。カレンダーと表に祝日名を表示する（F3・F5・F6） | 2026-11-02 |
+ | U10 | CSV 出力を足す（F7）。1行 = 1つの移動の明細で、移動の無い日（在宅・休日で追加の移動が無い日、未入力の日）は行を作らない。UTF-8（BOM 付き）・CRLF。CSV の文字列は `shared/` の純粋関数で作り、画面でファイルにする（API は足さない）。当てはめ中は保存できず、未入力の日は入らない | 2026-11-04 |
++| U11 | ルート名は重ならないようにする。比べるのは前後の空白を除いた完全一致（大文字小文字・全角半角・記号はそろえない）。登録（POST）と、名前を変える編集（PUT）が重なれば 409。名前を変えない編集は、すでに重なっているルートでも通す。すでにある重なりは手で直す（データは書き換えない）。DB に一意の制約は張らず、API の受け口で調べる（F1） | 2026-11-06 |
+diff --git a/docs/troubleshooting.md b/docs/troubleshooting.md
+index 400f1d7..c4e435b 100644
+--- a/docs/troubleshooting.md
++++ b/docs/troubleshooting.md
+@@ -14,7 +14,7 @@
+ |---|---|
+ | `npm run dev` を動かしているターミナル | `[backend]` の行: backend のエラー（500 のときは中身がここに出る）。`[frontend]` の行: Vite のエラー（`http proxy error` は backend につながらない） |
+ | ブラウザの開発者ツールの「コンソール」（F12） | 画面（React）の例外。赤い行の一番上を読む |
+-| 開発者ツールの「ネットワーク」で `/api/...` の行 | API のステータス（400・404・500・502 など）と、応答の本文（`error`・`fieldErrors`） |
++| 開発者ツールの「ネットワーク」で `/api/...` の行 | API のステータス（400・404・409・500・502 など）と、応答の本文（`error`・`fieldErrors`） |
+ 
+ ## 起動
+ 
+@@ -36,6 +36,7 @@
+ | サーバーでエラーが起きました | backend の想定外の例外（500） | **ターミナルの `[backend]` に例外の中身が出る**（`backend/src/app.ts` の `onError`） |
+ | リクエストを読み取れません | 本文が JSON として読めない（400）。画面から使う限りは起きないはず | `curl` などで手で API を呼んだなら、本文と `Content-Type: application/json` を確かめる |
+ | 入力に誤りがあります（＋欄の下に赤い文） | API の受け口のバリデーションで弾かれた（400）。欄ごとの理由は `fieldErrors` | 欄の文の元: `backend/src/validation/fields.ts`（文字の長さ・運賃・URL）、一括設定は `backend/src/daily-records/` の検証 |
++| 同じ名前のルートがあります（＋ルート名の欄の下に赤い文） | ほかのルートと名前が同じ（409）。前後の空白は無視して比べる。編集では名前を変えるときだけ | 名前を変える。見分けたい違い（バス・経由など）を名前に入れる。`backend/src/routes/route-router.ts` |
+ | ルートが見つかりません | 編集・削除しようとしたルートが、もう無い（別のタブで消したなど。404） | 画面を読み直す。`backend/src/routes/route-router.ts` |
+ | 選んだルートが見つかりません | 出勤で選んだルートが、もう無い（別のタブで消したなど） | 画面を読み直して選び直す。`backend/src/daily-records/daily-record-router.ts` |
+ | その日の記録が見つかりません・追加の移動が見つかりません | 消した記録・追加の移動を、もう一度直そうとした（404） | 画面を読み直す。同じファイル |
+@@ -51,6 +52,7 @@ backend は、失敗を必ず `{ "error": "...", "fieldErrors": [...] }`（`ApiE
+ |---|---|---|
+ | 400 | 入力の誤り。`fieldErrors` に欄ごとの理由 | `backend/src/validation/`・各 `*-router.ts` |
+ | 404 | ルート・記録・追加の移動が無い。経路検索では「経路が見つからない」 | 各 `*-router.ts` |
++| 409 | ルートの名前が、ほかのルートと同じ。`fieldErrors` に `name` の理由 | `backend/src/routes/route-router.ts` |
+ | 500 | 想定外の例外。本文は「サーバーでエラーが起きました」だけで、中身はターミナルに出る | `backend/src/app.ts` の `onError` |
+ | 502 | 経路検索で、駅すぱあと API が失敗した（本文に理由）。**本文が JSON でない 502・503・504 は Vite の proxy**（backend が止まっている。画面には「サーバーに接続できません」と出る） | `backend/src/route-search/` |
+ | 503 | 経路検索のキーが無い | `backend/.env` の `EKISPERT_API_KEY` |
+diff --git a/frontend/src/routes/route-form.test.ts b/frontend/src/routes/route-form.test.ts
+index 2a50648..ee1c11f 100644
+--- a/frontend/src/routes/route-form.test.ts
++++ b/frontend/src/routes/route-form.test.ts
+@@ -83,6 +83,12 @@ describe("toRouteFormErrors", () => {
+     expect(result.other).toEqual([]);
+   });
+ 
++  it("409（名前の重なり）の fieldErrors も、ルート名の欄の下に出る", () => {
++    const result = toRouteFormErrors([{ field: "name", message: "同じ名前のルートがあります" }]);
++    expect(result.byField).toEqual({ name: "同じ名前のルートがあります" });
++    expect(result.other).toEqual([]);
++  });
++
+   it("欄に結び付かないエラーは other に集める", () => {
+     const result = toRouteFormErrors([{ field: "", message: "JSON のオブジェクトを送ってください" }]);
+     expect(result.byField).toEqual({});

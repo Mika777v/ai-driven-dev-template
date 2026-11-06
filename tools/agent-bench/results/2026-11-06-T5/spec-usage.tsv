@@ -1,0 +1,7 @@
+run	spec_tokens	spec_cost_usd	spec_sec
+T5-unique-route-name-template-spec-opus-5-5-sonnet-5-5-1	364579	0.8702148	132
+T5-unique-route-name-template-spec-opus-5-5-sonnet-5-5-2	639858	0.7587146	144
+T5-unique-route-name-template-spec-opus-5-5-sonnet-5-5-3	543940	0.7077642	126
+T5-unique-route-name-template-spec-sonnet-5-5-sonnet-5-5-1	285830	0.2133956	56
+T5-unique-route-name-template-spec-sonnet-5-5-sonnet-5-5-2	290634	0.23337870000000002	75
+T5-unique-route-name-template-spec-sonnet-5-5-sonnet-5-5-3	308982	0.24395189999999997	59

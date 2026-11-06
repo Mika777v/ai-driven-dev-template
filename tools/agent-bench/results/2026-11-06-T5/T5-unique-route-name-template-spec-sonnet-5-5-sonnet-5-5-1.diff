@@ -1,0 +1,253 @@
+diff --git a/backend/src/routes/route-repository.ts b/backend/src/routes/route-repository.ts
+index 0e40520..b2405ce 100644
+--- a/backend/src/routes/route-repository.ts
++++ b/backend/src/routes/route-repository.ts
+@@ -8,6 +8,8 @@ import type { Route, RouteInput } from "@routepense/shared";
+ export interface RouteRepository {
+   list(userId: string): Route[];
+   get(userId: string, id: string): Route | undefined;
++  /** そのユーザーに、同じ名前（完全一致）のルートがあるか */
++  existsByName(userId: string, name: string): boolean;
+   create(userId: string, input: RouteInput): Route;
+   /** 見つからなければ undefined */
+   update(userId: string, id: string, input: RouteInput): Route | undefined;
+diff --git a/backend/src/routes/route-router.test.ts b/backend/src/routes/route-router.test.ts
+index db635b1..febd389 100644
+--- a/backend/src/routes/route-router.test.ts
++++ b/backend/src/routes/route-router.test.ts
+@@ -1,6 +1,7 @@
+ import type { ApiError, Route, RouteInput } from "@routepense/shared";
+ import { afterEach, beforeEach, describe, expect, it } from "vitest";
+ import { startTestServer } from "../test-server";
++import { DUPLICATE_ROUTE_NAME_MESSAGE } from "./route-router";
+ 
+ const input: RouteInput = {
+   name: "自宅↔本社",
+@@ -49,6 +50,50 @@ describe("/api/routes", () => {
+     expect(body.fieldErrors?.map((e) => e.field)).toEqual(["name", "oneWayFare"]);
+   });
+ 
++  describe("同じ名前のルート", () => {
++    async function count() {
++      return ((await (await send("GET", "")).json()) as Route[]).length;
++    }
++
++    it("すでにある名前で登録すると 409 で、ルートは増えない", async () => {
++      await send("POST", "", input);
++      const res = await send("POST", "", { ...input, from: "C駅" });
++      expect(res.status).toBe(409);
++      expect(await res.json()).toEqual({
++        error: "入力に誤りがあります",
++        fieldErrors: [{ field: "name", message: DUPLICATE_ROUTE_NAME_MESSAGE }],
++      });
++      expect(DUPLICATE_ROUTE_NAME_MESSAGE).toBe("同じ名前のルートがあります");
++      expect(await count()).toBe(1);
++    });
++
++    it("前後に空白のある同じ名前も 409", async () => {
++      await send("POST", "", input);
++      const res = await send("POST", "", { ...input, name: ` ${input.name} ` });
++      expect(res.status).toBe(409);
++      expect(await count()).toBe(1);
++    });
++
++    it("違う名前なら 201 で登録できる", async () => {
++      await send("POST", "", input);
++      const res = await send("POST", "", { ...input, name: "自宅↔客先A" });
++      expect(res.status).toBe(201);
++      expect(await count()).toBe(2);
++    });
++
++    it("形式の誤りは重複より先に見て、400 のまま", async () => {
++      await send("POST", "", input);
++      const res = await send("POST", "", { ...input, oneWayFare: -1 });
++      expect(res.status).toBe(400);
++    });
++
++    it("編集では確かめない（今までどおり）", async () => {
++      await send("POST", "", input);
++      const other = (await (await send("POST", "", { ...input, name: "B" })).json()) as Route;
++      expect((await send("PUT", `/${other.id}`, input)).status).toBe(200);
++    });
++  });
++
+   it("経路の URL を付けて登録でき、http(s) でない URL は 400", async () => {
+     const searchUrl = "https://example.com/result?from=A&to=B";
+     const created = (await (await send("POST", "", { ...input, searchUrl })).json()) as Route;
+diff --git a/backend/src/routes/route-router.ts b/backend/src/routes/route-router.ts
+index d4b176b..0a0bfa5 100644
+--- a/backend/src/routes/route-router.ts
++++ b/backend/src/routes/route-router.ts
+@@ -5,6 +5,9 @@ import type { RouteRepository } from "./route-repository";
+ 
+ const notFound: ApiError = { error: "ルートが見つかりません" };
+ 
++/** 登録しようとした名前が、すでにあるルートと同じとき（画面にもそのまま出る） */
++export const DUPLICATE_ROUTE_NAME_MESSAGE = "同じ名前のルートがあります";
++
+ /** /api/routes の API。ルートの一覧・登録・編集・削除 */
+ export function routeRouter(repo: RouteRepository, userId: string): Router {
+   const router = Router();
+@@ -21,6 +24,15 @@ export function routeRouter(repo: RouteRepository, userId: string): Router {
+       res.status(400).json(body);
+       return;
+     }
++    // 形式の検証（400）が通ってから、重複を見る。parse が前後の空白を取るので、保存される名前どうしを比べる
++    if (repo.existsByName(userId, parsed.value.name)) {
++      const body: ApiError = {
++        error: "入力に誤りがあります",
++        fieldErrors: [{ field: "name", message: DUPLICATE_ROUTE_NAME_MESSAGE }],
++      };
++      res.status(409).json(body);
++      return;
++    }
+     res.status(201).json(repo.create(userId, parsed.value));
+   });
+ 
+diff --git a/backend/src/routes/sqlite-route-repository.test.ts b/backend/src/routes/sqlite-route-repository.test.ts
+index a192ae6..9a8bb1b 100644
+--- a/backend/src/routes/sqlite-route-repository.test.ts
++++ b/backend/src/routes/sqlite-route-repository.test.ts
+@@ -36,6 +36,15 @@ describe("SqliteRouteRepository", () => {
+     expect(repo.get("user-1", created.id)).toEqual(created);
+   });
+ 
++  it("existsByName: 同じ名前の完全一致だけ true。別のユーザーのルートは数えない", () => {
++    repo.create("user-1", input);
++
++    expect(repo.existsByName("user-1", input.name)).toBe(true);
++    expect(repo.existsByName("user-1", "自宅")).toBe(false);
++    expect(repo.existsByName("user-1", ` ${input.name}`)).toBe(false);
++    expect(repo.existsByName("user-2", input.name)).toBe(false);
++  });
++
+   it("一覧は登録した順に並ぶ", () => {
+     const a = repo.create("user-1", { ...input, name: "A" });
+     const b = repo.create("user-1", { ...input, name: "B" });
+diff --git a/backend/src/routes/sqlite-route-repository.ts b/backend/src/routes/sqlite-route-repository.ts
+index f304c71..27a2a4b 100644
+--- a/backend/src/routes/sqlite-route-repository.ts
++++ b/backend/src/routes/sqlite-route-repository.ts
+@@ -52,6 +52,11 @@ export class SqliteRouteRepository implements RouteRepository {
+     return row ? toRoute(row) : undefined;
+   }
+ 
++  existsByName(userId: string, name: string): boolean {
++    const row = this.db.prepare("SELECT 1 FROM routes WHERE user_id = ? AND name = ? LIMIT 1").get(userId, name);
++    return row !== undefined;
++  }
++
+   create(userId: string, input: RouteInput): Route {
+     const id = randomUUID();
+     const at = this.now().toISOString();
+diff --git a/docs/PROGRESS.md b/docs/PROGRESS.md
+index 33182cc..97ffd64 100644
+--- a/docs/PROGRESS.md
++++ b/docs/PROGRESS.md
+@@ -32,22 +32,23 @@
+ 1. **オーナーの確認待ちの PR が2つ。** マージされたら、それぞれの続きに進む
+    - [#92](https://github.com/Mika777v/routepense/pull/92)（E12-T2 #88）: CLAUDE.md「git の運用」10 に「メッセージ・ステータス・起動のログを変えたら `docs/troubleshooting.md` も同じ PR で直す」。マージされたら Epic #86 の Task が全部閉じるので、Epic を閉じる
+    - [#99](https://github.com/Mika777v/routepense/pull/99)（E13-T1 #95）: ADR-0003（OpenAPI を手で書き Swagger UI で見る。依存 `swagger-ui-express` 5.0.1・`yaml` 2.9.1・`@types/swagger-ui-express` 4.1.8）。マージされたら T2 #96（`docs/api/openapi.yaml` と「メソッド＋パス」の一致のテスト）→ T3 #97（`/api/docs` の Swagger UI）の順に進む。T4 #98（CLAUDE.md のルールと教科書の章）は #92 のマージの後（CLAUDE.md の同じ箇所を触るため）
+-2. **Epic #86（E12）困ったときの手順書。** `docs/troubleshooting.md` は #91 で作り、見つけた2件（#89 backend が止まると「HTTP 502」としか出ない・#90 ポートが使用中でも起動の文が出る）は #93 で直した。オーナーの動作確認で困ったことは、手順書の「起きたことの記録」に足す
+-3. **Epic #71（E09）駅すぱあとの本物の API で経路検索を試す。** 手順と状況は `docs/ekispert-setup.md`
++2. **同じ名前のルートの登録を 409 で止める**（ブランチ `fix/unique-route-name`、PR 作成待ち）。**編集（`PUT`）はまだ重複を確かめない**ので、続きの Task を作る。要件定義 F1 に「ルート名は重複しない」を入れるかはオーナーが決める（別 PR）
++3. **Epic #86（E12）困ったときの手順書。** `docs/troubleshooting.md` は #91 で作り、見つけた2件（#89 backend が止まると「HTTP 502」としか出ない・#90 ポートが使用中でも起動の文が出る）は #93 で直した。オーナーの動作確認で困ったことは、手順書の「起きたことの記録」に足す
++4. **Epic #71（E09）駅すぱあとの本物の API で経路検索を試す。** 手順と状況は `docs/ekispert-setup.md`
+    - キーの状況: **まだ申し込んでいない**（2026-11-04 にオーナーが回答: 届くまでの3営業日に作業する時間が取れないので、今は申し込まない）。オーナーが申し込み、キーが届いたら localhost の連絡（`info@val.co.jp`。下書きは `docs/ekispert-setup.md`）をする
+    - T1 #72（申し込みの手順と連絡文）は済み。T2 #73（キーを設定して確かめる）はキーと localhost の許可が揃ってから。T3 #74（保存した URL が後日も開けるか）は T2 の後
+    - 生成した URL を保存してよいか・有効期限は、仕様書にも FAQ にも書かれていない（#64 で確認）。T3 で確かめる
+    - 作業した環境（クラウド）からは `api-info.ekispert.com` が開けなかった（ネットワークで許可していない）。フォームの欄は確かめられていない
+    - ほかの候補:
+      - 祝日の 2028年分: 一覧は 2026・2027年 だけ。2028年は、内閣府が 2027年2月ごろに春分・秋分の日を決めた後に `shared/src/holidays.ts` と `HOLIDAY_YEARS` に足す
+-4. 月次画面の作り（`frontend/src/calendar/`）:
++5. 月次画面の作り（`frontend/src/calendar/`）:
+    - `CalendarPage.tsx` が、表示中の月・その月の記録の一覧・ルートの一覧・一括設定の当てはめ中の内容（`Draft`）・見せ方（カレンダー / 表）を持つ。カレンダー・表・合計は、どれも「保存済み＋当てはめ中」の同じ記録の一覧から作る
+    - 記録 → 週の配列は `month.ts` の `buildCalendar`。表の行は `month-table.ts` の `buildTableRows`（週の配列から作る）。月の合計は `shared` の `monthlyFare`（`MonthTotal.tsx` が表示）
+    - 日の編集パネル `DayPanel.tsx`、一括設定 `BulkDialog.tsx`・`DraftBar.tsx`・`draft.ts`、追加の移動 `ExtraTrips.tsx`・`ExtraTripForm.tsx`、表 `MonthTable.tsx`
+    - API の呼び出しの共通部分は `frontend/src/api-client.ts`（`request`・`ApiResult`）
+-5. 教科書は第18章（タプル型）まで。次の章は、次の機能の作業で使う概念から選ぶ
+-6. **使い勝手の手直し**: オーナーが教科書を読みながら動作確認し、気になったところを挙げる（2026-11-04）。挙がったら E11 とは別の Epic で Task にする
+-7. **既知の警告**: `npm install` で `11 moderate severity vulnerabilities` と出るのは既知（`docs/npm-audit.md`）。元は lint だけで使う `minimatch@10.2.6` の1件で、上流（`eslint`・`typescript-eslint`）が `minimatch@^11` に上げるのを待つと決めた。`npm audit fix --force` は古い版に戻すだけなので使わない。`overrides` も書かない
++6. 教科書は第18章（タプル型）まで。次の章は、次の機能の作業で使う概念から選ぶ
++7. **使い勝手の手直し**: オーナーが教科書を読みながら動作確認し、気になったところを挙げる（2026-11-04）。挙がったら E11 とは別の Epic で Task にする
++8. **既知の警告**: `npm install` で `11 moderate severity vulnerabilities` と出るのは既知（`docs/npm-audit.md`）。元は lint だけで使う `minimatch@10.2.6` の1件で、上流（`eslint`・`typescript-eslint`）が `minimatch@^11` に上げるのを待つと決めた。`npm audit fix --force` は古い版に戻すだけなので使わない。`overrides` も書かない
+ 
+ ## 会話で決めたこと（ほかの文書に無いもの）
+ 
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index dfe3a6f..adaa6e2 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -74,6 +74,7 @@ paths:
+             application/json:
+               schema: { $ref: "#/components/schemas/Route" }
+         "400": { $ref: "#/components/responses/BadRequest" }
++        "409": { $ref: "#/components/responses/DuplicateRouteName" }
+ 
+   /api/routes/{id}:
+     parameters:
+@@ -325,6 +326,15 @@ components:
+             error: 入力に誤りがあります
+             fieldErrors:
+               - { field: oneWayFare, message: 片道運賃は0以上の整数（円）で入力してください }
++    DuplicateRouteName:
++      description: 同じ名前のルートがすでにある（前後の空白を除いた完全一致。登録のときだけ。編集では確かめない）
++      content:
++        application/json:
++          schema: { $ref: "#/components/schemas/ApiError" }
++          example:
++            error: 入力に誤りがあります
++            fieldErrors:
++              - { field: name, message: 同じ名前のルートがあります }
+     NotFound:
+       description: 対象が見つからない
+       content:
+diff --git a/docs/troubleshooting.md b/docs/troubleshooting.md
+index 400f1d7..51b2cd7 100644
+--- a/docs/troubleshooting.md
++++ b/docs/troubleshooting.md
+@@ -36,6 +36,7 @@
+ | サーバーでエラーが起きました | backend の想定外の例外（500） | **ターミナルの `[backend]` に例外の中身が出る**（`backend/src/app.ts` の `onError`） |
+ | リクエストを読み取れません | 本文が JSON として読めない（400）。画面から使う限りは起きないはず | `curl` などで手で API を呼んだなら、本文と `Content-Type: application/json` を確かめる |
+ | 入力に誤りがあります（＋欄の下に赤い文） | API の受け口のバリデーションで弾かれた（400）。欄ごとの理由は `fieldErrors` | 欄の文の元: `backend/src/validation/fields.ts`（文字の長さ・運賃・URL）、一括設定は `backend/src/daily-records/` の検証 |
++| 同じ名前のルートがあります（ルート名の欄の下の赤い文） | 登録しようとした名前が、すでにあるルートと同じ（409。前後の空白は無視して比べる）。編集では確かめない | 名前を変えて登録する。`backend/src/routes/route-router.ts` |
+ | ルートが見つかりません | 編集・削除しようとしたルートが、もう無い（別のタブで消したなど。404） | 画面を読み直す。`backend/src/routes/route-router.ts` |
+ | 選んだルートが見つかりません | 出勤で選んだルートが、もう無い（別のタブで消したなど） | 画面を読み直して選び直す。`backend/src/daily-records/daily-record-router.ts` |
+ | その日の記録が見つかりません・追加の移動が見つかりません | 消した記録・追加の移動を、もう一度直そうとした（404） | 画面を読み直す。同じファイル |
+@@ -51,6 +52,7 @@ backend は、失敗を必ず `{ "error": "...", "fieldErrors": [...] }`（`ApiE
+ |---|---|---|
+ | 400 | 入力の誤り。`fieldErrors` に欄ごとの理由 | `backend/src/validation/`・各 `*-router.ts` |
+ | 404 | ルート・記録・追加の移動が無い。経路検索では「経路が見つからない」 | 各 `*-router.ts` |
++| 409 | ルートの登録で、同じ名前のルートがある。`fieldErrors` は `name` の1件 | `backend/src/routes/route-router.ts` |
+ | 500 | 想定外の例外。本文は「サーバーでエラーが起きました」だけで、中身はターミナルに出る | `backend/src/app.ts` の `onError` |
+ | 502 | 経路検索で、駅すぱあと API が失敗した（本文に理由）。**本文が JSON でない 502・503・504 は Vite の proxy**（backend が止まっている。画面には「サーバーに接続できません」と出る） | `backend/src/route-search/` |
+ | 503 | 経路検索のキーが無い | `backend/.env` の `EKISPERT_API_KEY` |
+diff --git a/frontend/src/routes/routes-api.test.ts b/frontend/src/routes/routes-api.test.ts
+index 0c49aa9..c069269 100644
+--- a/frontend/src/routes/routes-api.test.ts
++++ b/frontend/src/routes/routes-api.test.ts
+@@ -1,5 +1,6 @@
+ import type { RouteInput } from "@routepense/shared";
+ import { afterEach, describe, expect, it, vi } from "vitest";
++import { toRouteFormErrors } from "./route-form";
+ import { createRoute, deleteRoute, listRoutes, updateRoute } from "./routes-api";
+ 
+ const input: RouteInput = { name: "自宅↔本社", from: "中野", to: "東京", transport: "train", oneWayFare: 220 };
+@@ -35,6 +36,17 @@ describe("routes-api", () => {
+     expect(fake).toHaveBeenCalledWith("/api/routes", expect.objectContaining({ method: "POST", body: JSON.stringify(input) }));
+   });
+ 
++  it("同じ名前（409）: ApiError を返し、toRouteFormErrors でルート名の欄の文になる", async () => {
++    const error = { error: "入力に誤りがあります", fieldErrors: [{ field: "name", message: "同じ名前のルートがあります" }] };
++    stubFetch(json(409, error));
++    const result = await createRoute(input);
++    expect(result).toEqual({ ok: false, error });
++    if (result.ok) throw new Error("unreachable");
++    const { byField, other } = toRouteFormErrors(result.error.fieldErrors);
++    expect(byField).toEqual({ name: "同じ名前のルートがあります" });
++    expect(other).toEqual([]);
++  });
++
+   it("入力の誤り: API の ApiError（fieldErrors 付き）をそのまま返す", async () => {
+     const error = { error: "入力に誤りがあります", fieldErrors: [{ field: "name", message: "ルート名を入力してください" }] };
+     stubFetch(json(400, error));

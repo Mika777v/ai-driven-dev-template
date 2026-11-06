@@ -1,0 +1,254 @@
+diff --git a/backend/src/routes/route-repository.ts b/backend/src/routes/route-repository.ts
+index 0e40520..96f5a09 100644
+--- a/backend/src/routes/route-repository.ts
++++ b/backend/src/routes/route-repository.ts
+@@ -8,6 +8,8 @@ import type { Route, RouteInput } from "@routepense/shared";
+ export interface RouteRepository {
+   list(userId: string): Route[];
+   get(userId: string, id: string): Route | undefined;
++  /** 同じユーザーの中で、名前が完全一致するルート。exceptId のルートは除く（編集で自分自身を除くため） */
++  findByName(userId: string, name: string, exceptId?: string): Route | undefined;
+   create(userId: string, input: RouteInput): Route;
+   /** 見つからなければ undefined */
+   update(userId: string, id: string, input: RouteInput): Route | undefined;
+diff --git a/backend/src/routes/route-router.test.ts b/backend/src/routes/route-router.test.ts
+index db635b1..be845b2 100644
+--- a/backend/src/routes/route-router.test.ts
++++ b/backend/src/routes/route-router.test.ts
+@@ -49,6 +49,41 @@ describe("/api/routes", () => {
+     expect(body.fieldErrors?.map((e) => e.field)).toEqual(["name", "oneWayFare"]);
+   });
+ 
++  it("同じ名前を登録すると 409 で、ルートは増えない（前後の空白は無視）", async () => {
++    await send("POST", "", input);
++    for (const name of ["自宅↔本社", " 自宅↔本社 "]) {
++      const res = await send("POST", "", { ...input, name });
++      expect(res.status).toBe(409);
++      expect(await res.json()).toEqual({
++        error: "入力に誤りがあります",
++        fieldErrors: [{ field: "name", message: "同じ名前のルートがあります" }],
++      });
++    }
++    expect(((await (await send("GET", "")).json()) as Route[]).length).toBe(1);
++  });
++
++  it("違う名前なら 201。形の誤りは重複より先に 400", async () => {
++    await send("POST", "", input);
++    expect((await send("POST", "", { ...input, name: "自宅↔客先A" })).status).toBe(201);
++    expect((await send("POST", "", { ...input, name: " " })).status).toBe(400);
++    expect((await send("POST", "", { ...input, oneWayFare: -1 })).status).toBe(400);
++  });
++
++  it("削除した後は、同じ名前で登録できる", async () => {
++    const created = (await (await send("POST", "", input)).json()) as Route;
++    await send("DELETE", `/${created.id}`);
++    expect((await send("POST", "", input)).status).toBe(201);
++  });
++
++  it("編集: 他のルートと同じ名前は 409、自分の名前のままなら 200、無い id は 404", async () => {
++    const a = (await (await send("POST", "", input)).json()) as Route;
++    const b = (await (await send("POST", "", { ...input, name: "自宅↔客先A" })).json()) as Route;
++
++    expect((await send("PUT", `/${b.id}`, input)).status).toBe(409);
++    expect((await send("PUT", `/${a.id}`, { ...input, oneWayFare: 230 })).status).toBe(200);
++    expect((await send("PUT", "/missing", input)).status).toBe(404);
++  });
++
+   it("経路の URL を付けて登録でき、http(s) でない URL は 400", async () => {
+     const searchUrl = "https://example.com/result?from=A&to=B";
+     const created = (await (await send("POST", "", { ...input, searchUrl })).json()) as Route;
+diff --git a/backend/src/routes/route-router.ts b/backend/src/routes/route-router.ts
+index d4b176b..719ba1c 100644
+--- a/backend/src/routes/route-router.ts
++++ b/backend/src/routes/route-router.ts
+@@ -3,6 +3,10 @@ import { Router } from "express";
+ import { parseRouteInput } from "./parse-route-input";
+ import type { RouteRepository } from "./route-repository";
+ 
++const duplicateName: ApiError = {
++  error: "入力に誤りがあります",
++  fieldErrors: [{ field: "name", message: "同じ名前のルートがあります" }],
++};
+ const notFound: ApiError = { error: "ルートが見つかりません" };
+ 
+ /** /api/routes の API。ルートの一覧・登録・編集・削除 */
+@@ -21,6 +25,10 @@ export function routeRouter(repo: RouteRepository, userId: string): Router {
+       res.status(400).json(body);
+       return;
+     }
++    if (repo.findByName(userId, parsed.value.name)) {
++      res.status(409).json(duplicateName);
++      return;
++    }
+     res.status(201).json(repo.create(userId, parsed.value));
+   });
+ 
+@@ -31,6 +39,15 @@ export function routeRouter(repo: RouteRepository, userId: string): Router {
+       res.status(400).json(body);
+       return;
+     }
++    // 無い id は 404 を先にする
++    if (!repo.get(userId, req.params.id)) {
++      res.status(404).json(notFound);
++      return;
++    }
++    if (repo.findByName(userId, parsed.value.name, req.params.id)) {
++      res.status(409).json(duplicateName);
++      return;
++    }
+     const updated = repo.update(userId, req.params.id, parsed.value);
+     if (!updated) {
+       res.status(404).json(notFound);
+diff --git a/backend/src/routes/sqlite-route-repository.test.ts b/backend/src/routes/sqlite-route-repository.test.ts
+index a192ae6..296fed8 100644
+--- a/backend/src/routes/sqlite-route-repository.test.ts
++++ b/backend/src/routes/sqlite-route-repository.test.ts
+@@ -36,6 +36,17 @@ describe("SqliteRouteRepository", () => {
+     expect(repo.get("user-1", created.id)).toEqual(created);
+   });
+ 
++  it("findByName: 同じユーザーの同じ名前だけを返し、exceptId の自分は除く", () => {
++    const a = repo.create("user-1", input);
++    repo.create("user-2", { ...input, name: "他人" });
++
++    expect(repo.findByName("user-1", "自宅↔本社")).toEqual(a);
++    expect(repo.findByName("user-1", "自宅↔本社", a.id)).toBeUndefined();
++    expect(repo.findByName("user-1", "他人")).toBeUndefined();
++    expect(repo.findByName("user-2", "自宅↔本社")).toBeUndefined();
++    expect(repo.findByName("user-1", "自宅")).toBeUndefined();
++  });
++
+   it("一覧は登録した順に並ぶ", () => {
+     const a = repo.create("user-1", { ...input, name: "A" });
+     const b = repo.create("user-1", { ...input, name: "B" });
+diff --git a/backend/src/routes/sqlite-route-repository.ts b/backend/src/routes/sqlite-route-repository.ts
+index f304c71..0ad99cb 100644
+--- a/backend/src/routes/sqlite-route-repository.ts
++++ b/backend/src/routes/sqlite-route-repository.ts
+@@ -52,6 +52,15 @@ export class SqliteRouteRepository implements RouteRepository {
+     return row ? toRoute(row) : undefined;
+   }
+ 
++  findByName(userId: string, name: string, exceptId?: string): Route | undefined {
++    const row = this.db
++      .prepare(
++        `SELECT ${COLUMNS} FROM routes WHERE user_id = ? AND name = ? AND (? IS NULL OR id <> ?) ORDER BY created_at, id LIMIT 1`,
++      )
++      .get(userId, name, exceptId ?? null, exceptId ?? null) as RouteRow | undefined;
++    return row ? toRoute(row) : undefined;
++  }
++
+   create(userId: string, input: RouteInput): Route {
+     const id = randomUUID();
+     const at = this.now().toISOString();
+diff --git a/docs/PROGRESS.md b/docs/PROGRESS.md
+index 33182cc..20fbc66 100644
+--- a/docs/PROGRESS.md
++++ b/docs/PROGRESS.md
+@@ -3,7 +3,7 @@
+ 新しいセッションは、`CLAUDE.md` の次にこのファイルを読んで続きを始める。
+ セッションを終える前に、このファイルを更新して PR にする（`docs/DEV_RULES.md`「セッションとコンテキストの使い方」）。
+ 
+-- 最終更新: 2026-11-04
++- 最終更新: 2026-11-06
+ 
+ ## ステップ（docs/DEV_RULES.md「進め方」）と Epic
+ 
+@@ -25,6 +25,7 @@
+ | — | CSV 出力 F7（E10） | 完了 | [#76](https://github.com/Mika777v/routepense/issues/76)（閉じた） | [#80](https://github.com/Mika777v/routepense/pull/80)・[#84](https://github.com/Mika777v/routepense/pull/84)・[#85](https://github.com/Mika777v/routepense/pull/85) |
+ | — | 教科書の手入れ（E11） | 完了（第17・18章） | [#81](https://github.com/Mika777v/routepense/issues/81)（閉じた） | [#83](https://github.com/Mika777v/routepense/pull/83)・[#84](https://github.com/Mika777v/routepense/pull/84) |
+ | — | 困ったときの手順書（E12） | 確認待ち（#92） | [#86](https://github.com/Mika777v/routepense/issues/86) | [#91](https://github.com/Mika777v/routepense/pull/91)・[#93](https://github.com/Mika777v/routepense/pull/93) |
++| — | ルート名の重複を禁止（POST・PUT で 409） | PR 前（push できなかった。`PR_TITLE.txt`・`PR_BODY.md` を用意） | — | — |
+ | — | API の仕様書 OpenAPI・Swagger UI（E13） | 確認待ち（#99） | [#94](https://github.com/Mika777v/routepense/issues/94) | — |
+ 
+ ## 次にやること
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index dfe3a6f..ca97f68 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -74,6 +74,7 @@ paths:
+             application/json:
+               schema: { $ref: "#/components/schemas/Route" }
+         "400": { $ref: "#/components/responses/BadRequest" }
++        "409": { $ref: "#/components/responses/DuplicateRouteName" }
+ 
+   /api/routes/{id}:
+     parameters:
+@@ -96,6 +97,7 @@ paths:
+               schema: { $ref: "#/components/schemas/Route" }
+         "400": { $ref: "#/components/responses/BadRequest" }
+         "404": { $ref: "#/components/responses/NotFound" }
++        "409": { $ref: "#/components/responses/DuplicateRouteName" }
+     delete:
+       tags: [routes]
+       summary: ルートを削除する
+@@ -325,6 +327,15 @@ components:
+             error: 入力に誤りがあります
+             fieldErrors:
+               - { field: oneWayFare, message: 片道運賃は0以上の整数（円）で入力してください }
++    DuplicateRouteName:
++      description: 同じ名前のルートがすでにある（前後の空白を除いた完全一致。編集では自分以外）。`fieldErrors` の `field` は `name`
++      content:
++        application/json:
++          schema: { $ref: "#/components/schemas/ApiError" }
++          example:
++            error: 入力に誤りがあります
++            fieldErrors:
++              - { field: name, message: 同じ名前のルートがあります }
+     NotFound:
+       description: 対象が見つからない
+       content:
+diff --git a/docs/troubleshooting.md b/docs/troubleshooting.md
+index 400f1d7..31695c1 100644
+--- a/docs/troubleshooting.md
++++ b/docs/troubleshooting.md
+@@ -36,6 +36,7 @@
+ | サーバーでエラーが起きました | backend の想定外の例外（500） | **ターミナルの `[backend]` に例外の中身が出る**（`backend/src/app.ts` の `onError`） |
+ | リクエストを読み取れません | 本文が JSON として読めない（400）。画面から使う限りは起きないはず | `curl` などで手で API を呼んだなら、本文と `Content-Type: application/json` を確かめる |
+ | 入力に誤りがあります（＋欄の下に赤い文） | API の受け口のバリデーションで弾かれた（400）。欄ごとの理由は `fieldErrors` | 欄の文の元: `backend/src/validation/fields.ts`（文字の長さ・運賃・URL）、一括設定は `backend/src/daily-records/` の検証 |
++| 同じ名前のルートがあります（ルート名の欄の下） | 同じ名前のルートがすでにある（409。前後の空白を除いた完全一致。編集では自分以外と比べる） | 名前を変えるか、既存のルートを編集・削除する。すでに同名のルートが2つある場合、片方の運賃などだけを直しても保存できない。名前を変えて保存する。`backend/src/routes/route-router.ts` |
+ | ルートが見つかりません | 編集・削除しようとしたルートが、もう無い（別のタブで消したなど。404） | 画面を読み直す。`backend/src/routes/route-router.ts` |
+ | 選んだルートが見つかりません | 出勤で選んだルートが、もう無い（別のタブで消したなど） | 画面を読み直して選び直す。`backend/src/daily-records/daily-record-router.ts` |
+ | その日の記録が見つかりません・追加の移動が見つかりません | 消した記録・追加の移動を、もう一度直そうとした（404） | 画面を読み直す。同じファイル |
+@@ -51,6 +52,7 @@ backend は、失敗を必ず `{ "error": "...", "fieldErrors": [...] }`（`ApiE
+ |---|---|---|
+ | 400 | 入力の誤り。`fieldErrors` に欄ごとの理由 | `backend/src/validation/`・各 `*-router.ts` |
+ | 404 | ルート・記録・追加の移動が無い。経路検索では「経路が見つからない」 | 各 `*-router.ts` |
++| 409 | 同じ名前のルートがある（ルートの登録・編集）。`fieldErrors` は `name` | `backend/src/routes/route-router.ts` |
+ | 500 | 想定外の例外。本文は「サーバーでエラーが起きました」だけで、中身はターミナルに出る | `backend/src/app.ts` の `onError` |
+ | 502 | 経路検索で、駅すぱあと API が失敗した（本文に理由）。**本文が JSON でない 502・503・504 は Vite の proxy**（backend が止まっている。画面には「サーバーに接続できません」と出る） | `backend/src/route-search/` |
+ | 503 | 経路検索のキーが無い | `backend/.env` の `EKISPERT_API_KEY` |
+diff --git a/frontend/src/routes/route-form.test.ts b/frontend/src/routes/route-form.test.ts
+index 2a50648..1429da3 100644
+--- a/frontend/src/routes/route-form.test.ts
++++ b/frontend/src/routes/route-form.test.ts
+@@ -83,6 +83,12 @@ describe("toRouteFormErrors", () => {
+     expect(result.other).toEqual([]);
+   });
+ 
++  it("同じ名前（409）の文も name の欄に入る", () => {
++    const result = toRouteFormErrors([{ field: "name", message: "同じ名前のルートがあります" }]);
++    expect(result.byField).toEqual({ name: "同じ名前のルートがあります" });
++    expect(result.other).toEqual([]);
++  });
++
+   it("欄に結び付かないエラーは other に集める", () => {
+     const result = toRouteFormErrors([{ field: "", message: "JSON のオブジェクトを送ってください" }]);
+     expect(result.byField).toEqual({});
+diff --git a/frontend/src/routes/routes-api.test.ts b/frontend/src/routes/routes-api.test.ts
+index 0c49aa9..811a1c0 100644
+--- a/frontend/src/routes/routes-api.test.ts
++++ b/frontend/src/routes/routes-api.test.ts
+@@ -41,6 +41,12 @@ describe("routes-api", () => {
+     expect(await updateRoute("r1", input)).toEqual({ ok: false, error });
+   });
+ 
++  it("同じ名前（409）: ApiError をそのまま失敗として返す", async () => {
++    const error = { error: "入力に誤りがあります", fieldErrors: [{ field: "name", message: "同じ名前のルートがあります" }] };
++    stubFetch(json(409, error));
++    expect(await createRoute(input)).toEqual({ ok: false, error });
++  });
++
+   it("削除: 204 は本文なしの成功として返す", async () => {
+     const fake = stubFetch(new Response(null, { status: 204 }));
+     expect(await deleteRoute("r 1")).toEqual({ ok: true, value: undefined });

@@ -1,0 +1,13 @@
+run	tools	turns	tokens	cost_usd	sec	accept_passed	accept_total	suite_ok	typecheck_ok	lint_ok	branch_ok	branch_named	commits_conventional	uncommitted	pr_title_ok	pr_sections_ok	pr_confirm_declared	pr_links_issue	touched_textbook	touched_openapi	touched_frontend	touched_troubleshooting	touched_progress	migration_rewritten	out_of_scope	files_changed
+T5-unique-route-name-bare-sonnet-5-5-1	7	8	351837	0.17949400000000001	63	4	4	1	1	1	0	0	0	0	0	0	0	0		1	1	0	0	0	0	10
+T5-unique-route-name-bare-sonnet-5-5-2	7	8	356800	0.1739714	63	4	4	1	1	1	0	0	0	0	0	0	0	0		1	1	0	0	0	0	6
+T5-unique-route-name-bare-sonnet-5-5-3	7	8	340656	0.1480906	44	4	4	1	1	1	0	0	0	0	0	0	0	0		1	0	0	0	0	0	5
+T5-unique-route-name-template-sonnet-5-5-1	8	9	469241	0.23968969999999998	69	4	4	1	1	1	1	1	1	0	1	1	1	0		1	0	1	0	0	0	9
+T5-unique-route-name-template-sonnet-5-5-2	8	9	459639	0.2321205	70	4	4	1	1	1	1	1	1	0	1	1	1	0		1	1	1	0	0	0	7
+T5-unique-route-name-template-sonnet-5-5-3	7	8	356928	0.1862674	56	4	4	1	1	1	1	1	1	0	1	1	1	0		1	0	1	1	0	0	7
+T5-unique-route-name-template-spec-opus-5-5-sonnet-5-5-1	6	7	400616	0.28651329999999997	83	4	4	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	12
+T5-unique-route-name-template-spec-opus-5-5-sonnet-5-5-2	7	8	418739	0.24895380000000003	72	4	4	1	1	1	1	1	1	0	1	1	1	0		1	1	1	0	0	0	11
+T5-unique-route-name-template-spec-opus-5-5-sonnet-5-5-3	9	10	599556	0.34001719999999996	108	4	4	1	1	1	1	1	1	0	1	1	0	0		1	1	1	1	0	0	12
+T5-unique-route-name-template-spec-sonnet-5-5-sonnet-5-5-1	11	12	691156	0.30721780000000004	85	4	4	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	11
+T5-unique-route-name-template-spec-sonnet-5-5-sonnet-5-5-2	6	7	376886	0.25595019999999996	74	4	4	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	12
+T5-unique-route-name-template-spec-sonnet-5-5-sonnet-5-5-3	11	12	681233	0.31722140000000004	104	4	4	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	13

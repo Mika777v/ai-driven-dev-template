@@ -1,0 +1,89 @@
+diff --git a/backend/src/routes/route-router.test.ts b/backend/src/routes/route-router.test.ts
+index db635b1..8791a7b 100644
+--- a/backend/src/routes/route-router.test.ts
++++ b/backend/src/routes/route-router.test.ts
+@@ -42,6 +42,27 @@ describe("/api/routes", () => {
+     expect(list).toEqual([created]);
+   });
+ 
++  it("すでにある名前で登録すると 409 で、ルートは増えない", async () => {
++    await send("POST", "", input);
++    const res = await send("POST", "", { ...input, from: "C駅" });
++    expect(res.status).toBe(409);
++    const body = (await res.json()) as ApiError;
++    expect(body).toEqual({
++      error: "入力に誤りがあります",
++      fieldErrors: [{ field: "name", message: "同じ名前のルートがあります" }],
++    });
++    const list = (await (await send("GET", "")).json()) as Route[];
++    expect(list).toHaveLength(1);
++  });
++
++  it("違う名前なら続けて登録できる", async () => {
++    await send("POST", "", input);
++    const res = await send("POST", "", { ...input, name: "自宅↔支社" });
++    expect(res.status).toBe(201);
++    const list = (await (await send("GET", "")).json()) as Route[];
++    expect(list).toHaveLength(2);
++  });
++
+   it("入力に誤りがあると 400 で、項目ごとの理由が返る", async () => {
+     const res = await send("POST", "", { ...input, name: " ", oneWayFare: -1 });
+     expect(res.status).toBe(400);
+diff --git a/backend/src/routes/route-router.ts b/backend/src/routes/route-router.ts
+index d4b176b..b3a65be 100644
+--- a/backend/src/routes/route-router.ts
++++ b/backend/src/routes/route-router.ts
+@@ -21,6 +21,15 @@ export function routeRouter(repo: RouteRepository, userId: string): Router {
+       res.status(400).json(body);
+       return;
+     }
++    // 出勤を選ぶときに見分けられなくなるので、同じ名前のルートは登録させない
++    if (repo.list(userId).some((r) => r.name === parsed.value.name)) {
++      const body: ApiError = {
++        error: "入力に誤りがあります",
++        fieldErrors: [{ field: "name", message: "同じ名前のルートがあります" }],
++      };
++      res.status(409).json(body);
++      return;
++    }
+     res.status(201).json(repo.create(userId, parsed.value));
+   });
+ 
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index dfe3a6f..e269eec 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -74,6 +74,15 @@ paths:
+             application/json:
+               schema: { $ref: "#/components/schemas/Route" }
+         "400": { $ref: "#/components/responses/BadRequest" }
++        "409":
++          description: 同じ名前のルートがすでにある（`fieldErrors` に `name` の理由。ルートは増えない）
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/ApiError" }
++              example:
++                error: 入力に誤りがあります
++                fieldErrors:
++                  - { field: name, message: 同じ名前のルートがあります }
+ 
+   /api/routes/{id}:
+     parameters:
+diff --git a/frontend/src/routes/route-form.test.ts b/frontend/src/routes/route-form.test.ts
+index 2a50648..6bc844e 100644
+--- a/frontend/src/routes/route-form.test.ts
++++ b/frontend/src/routes/route-form.test.ts
+@@ -83,6 +83,12 @@ describe("toRouteFormErrors", () => {
+     expect(result.other).toEqual([]);
+   });
+ 
++  it("名前が重複したときの文は、ルート名の欄に出る", () => {
++    const result = toRouteFormErrors([{ field: "name", message: "同じ名前のルートがあります" }]);
++    expect(result.byField).toEqual({ name: "同じ名前のルートがあります" });
++    expect(result.other).toEqual([]);
++  });
++
+   it("欄に結び付かないエラーは other に集める", () => {
+     const result = toRouteFormErrors([{ field: "", message: "JSON のオブジェクトを送ってください" }]);
+     expect(result.byField).toEqual({});
