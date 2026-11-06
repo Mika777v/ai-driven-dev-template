@@ -1,0 +1,501 @@
+diff --git a/backend/src/db/migrations.ts b/backend/src/db/migrations.ts
+index 9d0d29b..4b8aa2b 100644
+--- a/backend/src/db/migrations.ts
++++ b/backend/src/db/migrations.ts
+@@ -76,4 +76,11 @@ export const migrations: readonly { version: number; sql: string }[] = [
+       ALTER TABLE routes ADD COLUMN search_url TEXT;
+     `,
+   },
++  {
++    version: 4,
++    sql: `
++      -- 使わなくなったルートの片付け。NULL なら今も使うルート、日時が入っていれば片付け済み
++      ALTER TABLE routes ADD COLUMN archived_at TEXT;
++    `,
++  },
+ ];
+diff --git a/backend/src/openapi.test.ts b/backend/src/openapi.test.ts
+index 3bcd0a0..b71a8be 100644
+--- a/backend/src/openapi.test.ts
++++ b/backend/src/openapi.test.ts
+@@ -61,8 +61,8 @@ describe("docs/api/openapi.yaml と backend の API の一致", () => {
+     expect(mounted).toHaveLength(apiRouters(deps).length);
+   });
+ 
+-  it("一覧の作り方の確かめ: 15 個の API がある", () => {
+-    expect(implementedEndpoints()).toHaveLength(15);
++  it("一覧の作り方の確かめ: 17 個の API がある", () => {
++    expect(implementedEndpoints()).toHaveLength(17);
+     expect(implementedEndpoints()).toContain("DELETE /api/daily-records/{date}/extra-trips/{tripId}");
+   });
+ });
+diff --git a/backend/src/routes/route-repository.ts b/backend/src/routes/route-repository.ts
+index 0e40520..e756d06 100644
+--- a/backend/src/routes/route-repository.ts
++++ b/backend/src/routes/route-repository.ts
+@@ -11,6 +11,8 @@ export interface RouteRepository {
+   create(userId: string, input: RouteInput): Route;
+   /** 見つからなければ undefined */
+   update(userId: string, id: string, input: RouteInput): Route | undefined;
++  /** 使わなくなったルートを片付ける（archived: true）／元に戻す（false）。見つからなければ undefined */
++  setArchived(userId: string, id: string, archived: boolean): Route | undefined;
+   /** 消せたら true、見つからなければ false */
+   delete(userId: string, id: string): boolean;
+ }
+diff --git a/backend/src/routes/route-router.test.ts b/backend/src/routes/route-router.test.ts
+index db635b1..dca8ef9 100644
+--- a/backend/src/routes/route-router.test.ts
++++ b/backend/src/routes/route-router.test.ts
+@@ -84,4 +84,33 @@ describe("/api/routes", () => {
+     expect((await send("DELETE", `/${created.id}`)).status).toBe(204);
+     expect(await (await send("GET", "")).json()).toEqual([]);
+   });
++
++  it("片付けると archived: true になり、元に戻すと項目ごと消える。何度呼んでも同じ", async () => {
++    const created = (await (await send("POST", "", input)).json()) as Route;
++    expect(created.archived).toBeUndefined();
++
++    for (let i = 0; i < 2; i++) {
++      const res = await send("POST", `/${created.id}/archive`);
++      expect(res.status).toBe(200);
++      expect(((await res.json()) as Route).archived).toBe(true);
++    }
++    const listed = (await (await send("GET", "")).json()) as Route[];
++    expect(listed.map((r) => r.archived)).toEqual([true]);
++
++    const restored = (await (await send("POST", `/${created.id}/unarchive`)).json()) as Route;
++    expect(restored).toEqual(created);
++  });
++
++  it("片付けたルートを編集しても、片付けたまま", async () => {
++    const created = (await (await send("POST", "", input)).json()) as Route;
++    await send("POST", `/${created.id}/archive`);
++
++    const edited = (await (await send("PUT", `/${created.id}`, { ...input, oneWayFare: 230 })).json()) as Route;
++    expect(edited).toMatchObject({ oneWayFare: 230, archived: true });
++  });
++
++  it("無いルートの片付け・元に戻すは 404", async () => {
++    expect((await send("POST", "/missing/archive")).status).toBe(404);
++    expect((await send("POST", "/missing/unarchive")).status).toBe(404);
++  });
+ });
+diff --git a/backend/src/routes/route-router.ts b/backend/src/routes/route-router.ts
+index d4b176b..1925a37 100644
+--- a/backend/src/routes/route-router.ts
++++ b/backend/src/routes/route-router.ts
+@@ -5,7 +5,7 @@ import type { RouteRepository } from "./route-repository";
+ 
+ const notFound: ApiError = { error: "ルートが見つかりません" };
+ 
+-/** /api/routes の API。ルートの一覧・登録・編集・削除 */
++/** /api/routes の API。ルートの一覧・登録・編集・片付け・削除 */
+ export function routeRouter(repo: RouteRepository, userId: string): Router {
+   const router = Router();
+ 
+@@ -39,6 +39,18 @@ export function routeRouter(repo: RouteRepository, userId: string): Router {
+     res.json(updated);
+   });
+ 
++  // 使わなくなったルートの片付け。何度呼んでも結果は同じ
++  for (const [action, archived] of [["archive", true], ["unarchive", false]] as const) {
++    router.post(`/:id/${action}`, (req, res) => {
++      const updated = repo.setArchived(userId, req.params.id, archived);
++      if (!updated) {
++        res.status(404).json(notFound);
++        return;
++      }
++      res.json(updated);
++    });
++  }
++
+   router.delete("/:id", (req, res) => {
+     if (!repo.delete(userId, req.params.id)) {
+       res.status(404).json(notFound);
+diff --git a/backend/src/routes/sqlite-route-repository.test.ts b/backend/src/routes/sqlite-route-repository.test.ts
+index a192ae6..de9e63c 100644
+--- a/backend/src/routes/sqlite-route-repository.test.ts
++++ b/backend/src/routes/sqlite-route-repository.test.ts
+@@ -36,6 +36,26 @@ describe("SqliteRouteRepository", () => {
+     expect(repo.get("user-1", created.id)).toEqual(created);
+   });
+ 
++  it("片付けと元に戻す。他のユーザーのルートや無い id は undefined", () => {
++    const created = repo.create("user-1", input);
++
++    expect(repo.setArchived("user-1", created.id, true)).toEqual({ ...created, archived: true });
++    expect(repo.get("user-1", created.id)?.archived).toBe(true);
++    expect(repo.setArchived("user-1", created.id, false)).toEqual(created);
++    expect(repo.setArchived("user-2", created.id, true)).toBeUndefined();
++    expect(repo.setArchived("user-1", "missing", true)).toBeUndefined();
++  });
++
++  it("片付けたルートを編集しても、片付けたまま", () => {
++    const created = repo.create("user-1", input);
++    repo.setArchived("user-1", created.id, true);
++
++    expect(repo.update("user-1", created.id, { ...input, oneWayFare: 999 })).toMatchObject({
++      oneWayFare: 999,
++      archived: true,
++    });
++  });
++
+   it("一覧は登録した順に並ぶ", () => {
+     const a = repo.create("user-1", { ...input, name: "A" });
+     const b = repo.create("user-1", { ...input, name: "B" });
+diff --git a/backend/src/routes/sqlite-route-repository.ts b/backend/src/routes/sqlite-route-repository.ts
+index f304c71..a4c921b 100644
+--- a/backend/src/routes/sqlite-route-repository.ts
++++ b/backend/src/routes/sqlite-route-repository.ts
+@@ -14,6 +14,8 @@ type RouteRow = {
+   one_way_fare: number;
+   /** URL が無ければ NULL */
+   search_url: string | null;
++  /** 片付けていなければ NULL */
++  archived_at: string | null;
+ };
+ 
+ function toRoute(row: RouteRow): Route {
+@@ -27,10 +29,11 @@ function toRoute(row: RouteRow): Route {
+     oneWayFare: row.one_way_fare,
+     // DB の NULL は「項目が無い」に変える（API の JSON に null を出さない）
+     ...(row.search_url !== null && { searchUrl: row.search_url }),
++    ...(row.archived_at !== null && { archived: true as const }),
+   };
+ }
+ 
+-const COLUMNS = "id, user_id, name, from_place, to_place, transport, one_way_fare, search_url";
++const COLUMNS = "id, user_id, name, from_place, to_place, transport, one_way_fare, search_url, archived_at";
+ 
+ export class SqliteRouteRepository implements RouteRepository {
+   constructor(
+@@ -57,7 +60,8 @@ export class SqliteRouteRepository implements RouteRepository {
+     const at = this.now().toISOString();
+     this.db
+       .prepare(
+-        `INSERT INTO routes (${COLUMNS}, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++        `INSERT INTO routes (id, user_id, name, from_place, to_place, transport, one_way_fare, search_url, created_at, updated_at)
++         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       )
+       .run(
+         id,
+@@ -93,7 +97,15 @@ export class SqliteRouteRepository implements RouteRepository {
+         userId,
+         id,
+       );
+-    return result.changes > 0 ? { id, userId, ...input } : undefined;
++    // 片付け済みかどうかは編集で変わらないので、保存した行を読み直して返す
++    return result.changes > 0 ? this.get(userId, id) : undefined;
++  }
++
++  setArchived(userId: string, id: string, archived: boolean): Route | undefined {
++    const result = this.db
++      .prepare("UPDATE routes SET archived_at = ?, updated_at = ? WHERE user_id = ? AND id = ?")
++      .run(archived ? this.now().toISOString() : null, this.now().toISOString(), userId, id);
++    return result.changes > 0 ? this.get(userId, id) : undefined;
+   }
+ 
+   delete(userId: string, id: string): boolean {
+diff --git a/docs/api/openapi.yaml b/docs/api/openapi.yaml
+index dfe3a6f..9cbb918 100644
+--- a/docs/api/openapi.yaml
++++ b/docs/api/openapi.yaml
+@@ -98,13 +98,44 @@ paths:
+         "404": { $ref: "#/components/responses/NotFound" }
+     delete:
+       tags: [routes]
+-      summary: ルートを削除する
++      summary: ルートを削除する（元に戻せない。使わなくなっただけなら archive）
+       description: そのルートを使った日次記録は消えない
+       operationId: deleteRoute
+       responses:
+         "204": { description: 削除した }
+         "404": { $ref: "#/components/responses/NotFound" }
+ 
++  /api/routes/{id}/archive:
++    parameters:
++      - $ref: "#/components/parameters/RouteId"
++    post:
++      tags: [routes]
++      summary: 使わなくなったルートを片付ける
++      description: 片付けたルートには archived（true）が付く。画面は出勤などの選択肢に出さない。記録は変わらず、unarchive で戻せる。何度呼んでも同じ
++      operationId: archiveRoute
++      responses:
++        "200":
++          description: 片付けた後のルート
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Route" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
++  /api/routes/{id}/unarchive:
++    parameters:
++      - $ref: "#/components/parameters/RouteId"
++    post:
++      tags: [routes]
++      summary: 片付けたルートを元に戻す
++      operationId: unarchiveRoute
++      responses:
++        "200":
++          description: 元に戻した後のルート
++          content:
++            application/json:
++              schema: { $ref: "#/components/schemas/Route" }
++        "404": { $ref: "#/components/responses/NotFound" }
++
+   /api/daily-records:
+     get:
+       tags: [daily-records]
+@@ -400,6 +431,7 @@ components:
+           properties:
+             id: { type: string }
+             userId: { type: string, description: 持ち主。今は固定値 }
++            archived: { const: true, description: 片付け済みのときだけ付く }
+         - $ref: "#/components/schemas/RouteInput"
+     RouteSnapshot:
+       type: object
+diff --git a/docs/requirements.md b/docs/requirements.md
+index b4986f2..0c792b4 100644
+--- a/docs/requirements.md
++++ b/docs/requirements.md
+@@ -32,6 +32,7 @@
+ - 運賃は手で入力する（運賃の自動計算はしない）。
+ - 経路の参照（U1）: 出発駅・到着駅を入れると、駅すぱあとの経路結果のページを開ける。そのページの URL をルートに残せる（任意。手でも直せる）。API のキーが無い環境では、この機能は出さない。
+ - ルートを編集すると、その後に作る記録から新しい値が使われる。
++- 使わなくなったルートは「片付ける」ことができる。片付けたルートは、出勤・追加の移動・一括設定の選択肢に出ず、ルート一覧では「片付けたルート」にまとまる。「元に戻す」で戻せる（削除と違い、ルートの値は残る）。
+ - ルートを編集・削除しても、過去の日次記録の金額と区間は変わらない（記録にその時点の値をコピーしているため。→ 5. データの項目）。
+ 
+ ### F2. カレンダー入力
+diff --git a/frontend/src/calendar/CalendarPage.tsx b/frontend/src/calendar/CalendarPage.tsx
+index 2d7e16d..93e97bf 100644
+--- a/frontend/src/calendar/CalendarPage.tsx
++++ b/frontend/src/calendar/CalendarPage.tsx
+@@ -75,7 +75,8 @@ export function CalendarPage() {
+     let active = true;
+     listRoutes().then((result) => {
+       if (!active) return;
+-      setRoutes(result.ok ? { kind: "ok", routes: result.value } : { kind: "error", message: result.error.error });
++      // 片付けたルートは選択肢に出さない
++      setRoutes(result.ok ? { kind: "ok", routes: result.value.filter((r) => !r.archived) } : { kind: "error", message: result.error.error });
+     });
+     return () => {
+       active = false;
+diff --git a/frontend/src/routes/RouteTicket.tsx b/frontend/src/routes/RouteTicket.tsx
+index bcddd5a..dc41843 100644
+--- a/frontend/src/routes/RouteTicket.tsx
++++ b/frontend/src/routes/RouteTicket.tsx
+@@ -6,13 +6,15 @@ type Props = {
+   /** 今フォームで編集しているルートなら true */
+   selected: boolean;
+   onEdit: (route: Route) => void;
++  /** 使わなくなったルートを片付ける（片付け済みのルートでは「元に戻す」になる） */
++  onToggleArchive: (route: Route) => void;
+   onDelete: (route: Route) => void;
+ };
+ 
+ /** 一覧の1件。切符（乗車券）に見立てて、区間と運賃を大きく見せる */
+-export function RouteTicket({ route, selected, onEdit, onDelete }: Props) {
++export function RouteTicket({ route, selected, onEdit, onToggleArchive, onDelete }: Props) {
+   return (
+-    <li className={selected ? "ticket is-selected" : "ticket"}>
++    <li className={["ticket", selected && "is-selected", route.archived && "is-archived"].filter(Boolean).join(" ")}>
+       <div className="ticket-body">
+         <p className="ticket-name">
+           {route.name}
+@@ -41,6 +43,9 @@ export function RouteTicket({ route, selected, onEdit, onDelete }: Props) {
+           <button type="button" onClick={() => onEdit(route)}>
+             編集
+           </button>
++          <button type="button" onClick={() => onToggleArchive(route)}>
++            {route.archived ? "元に戻す" : "片付ける"}
++          </button>
+           <button type="button" className="danger" onClick={() => onDelete(route)}>
+             削除
+           </button>
+diff --git a/frontend/src/routes/RoutesPage.tsx b/frontend/src/routes/RoutesPage.tsx
+index 4d41914..065816b 100644
+--- a/frontend/src/routes/RoutesPage.tsx
++++ b/frontend/src/routes/RoutesPage.tsx
+@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
+ import { RouteForm } from "./RouteForm";
+ import { RouteTicket } from "./RouteTicket";
+ import { getRouteSearchStatus } from "./route-search-api";
+-import { deleteRoute, listRoutes } from "./routes-api";
++import { archiveRoute, deleteRoute, listRoutes, unarchiveRoute } from "./routes-api";
+ 
+ /** 一覧の読み込みの状態（判別可能なユニオン型。読み込み中・成功・失敗のどれか1つ） */
+ type ListState = { kind: "loading" } | { kind: "ok"; routes: Route[] } | { kind: "error"; message: string };
+@@ -44,6 +44,21 @@ export function RoutesPage() {
+     void reload();
+   }
+ 
++  async function handleToggleArchive(route: Route) {
++    const archiving = !route.archived;
++    const result = await (archiving ? archiveRoute(route.id) : unarchiveRoute(route.id));
++    if (!result.ok) {
++      setNotice(result.error.error);
++      return;
++    }
++    setNotice(
++      archiving
++        ? `「${route.name}」を片付けました。出勤の選択肢には出ません（作成済みの記録は変わりません）`
++        : `「${route.name}」を元に戻しました`,
++    );
++    void reload();
++  }
++
+   async function handleDelete(route: Route) {
+     if (!window.confirm(`「${route.name}」を削除しますか？\n作成済みの記録の金額と区間は変わりません。`)) {
+       return;
+@@ -60,6 +75,26 @@ export function RoutesPage() {
+     void reload();
+   }
+ 
++  const routes = list.kind === "ok" ? list.routes : [];
++  const activeRoutes = routes.filter((r) => !r.archived);
++  const archivedRoutes = routes.filter((r) => r.archived);
++
++  function renderTicket(route: Route) {
++    return (
++      <RouteTicket
++        key={route.id}
++        route={route}
++        selected={editing?.id === route.id}
++        onEdit={(r) => {
++          setNotice(null);
++          setEditing(r);
++        }}
++        onToggleArchive={(r) => void handleToggleArchive(r)}
++        onDelete={(r) => void handleDelete(r)}
++      />
++    );
++  }
++
+   return (
+     <div className="routes-page">
+       <section className="routes-form-panel">
+@@ -87,21 +122,16 @@ export function RoutesPage() {
+         {list.kind === "ok" && list.routes.length === 0 && (
+           <p className="muted">まだルートがありません。左のフォームから、よく使う区間を登録してください。</p>
+         )}
+-        {list.kind === "ok" && list.routes.length > 0 && (
+-          <ul className="tickets">
+-            {list.routes.map((route) => (
+-              <RouteTicket
+-                key={route.id}
+-                route={route}
+-                selected={editing?.id === route.id}
+-                onEdit={(r) => {
+-                  setNotice(null);
+-                  setEditing(r);
+-                }}
+-                onDelete={(r) => void handleDelete(r)}
+-              />
+-            ))}
+-          </ul>
++        {list.kind === "ok" && list.routes.length > 0 && activeRoutes.length === 0 && (
++          <p className="muted">使うルートはありません。下の「片付けたルート」から戻せます。</p>
++        )}
++        {activeRoutes.length > 0 && <ul className="tickets">{activeRoutes.map(renderTicket)}</ul>}
++        {archivedRoutes.length > 0 && (
++          <details className="archived-routes">
++            <summary>片付けたルート（{archivedRoutes.length}件）</summary>
++            <p className="muted">出勤などの選択肢には出ません。記録に残った値は変わりません。</p>
++            <ul className="tickets">{archivedRoutes.map(renderTicket)}</ul>
++          </details>
+         )}
+       </section>
+     </div>
+diff --git a/frontend/src/routes/routes-api.test.ts b/frontend/src/routes/routes-api.test.ts
+index 0c49aa9..ac60f39 100644
+--- a/frontend/src/routes/routes-api.test.ts
++++ b/frontend/src/routes/routes-api.test.ts
+@@ -1,6 +1,6 @@
+ import type { RouteInput } from "@routepense/shared";
+ import { afterEach, describe, expect, it, vi } from "vitest";
+-import { createRoute, deleteRoute, listRoutes, updateRoute } from "./routes-api";
++import { archiveRoute, createRoute, deleteRoute, listRoutes, unarchiveRoute, updateRoute } from "./routes-api";
+ 
+ const input: RouteInput = { name: "自宅↔本社", from: "中野", to: "東京", transport: "train", oneWayFare: 220 };
+ 
+@@ -59,4 +59,15 @@ describe("routes-api", () => {
+     expect(result.ok).toBe(false);
+     if (!result.ok) expect(result.error.error).toContain("接続できません");
+   });
++
++  it("片付ける・元に戻す: archive / unarchive に POST する", async () => {
++    const route = { ...input, id: "r1", userId: "u1" };
++    const fake = stubFetch(json(200, { ...route, archived: true }));
++    expect(await archiveRoute("r1")).toEqual({ ok: true, value: { ...route, archived: true } });
++    expect(fake).toHaveBeenCalledWith("/api/routes/r1/archive", expect.objectContaining({ method: "POST" }));
++
++    const fake2 = stubFetch(json(200, route));
++    await unarchiveRoute("r1");
++    expect(fake2).toHaveBeenCalledWith("/api/routes/r1/unarchive", expect.objectContaining({ method: "POST" }));
++  });
+ });
+diff --git a/frontend/src/routes/routes-api.ts b/frontend/src/routes/routes-api.ts
+index 317659a..ddf113e 100644
+--- a/frontend/src/routes/routes-api.ts
++++ b/frontend/src/routes/routes-api.ts
+@@ -19,6 +19,16 @@ export function updateRoute(id: string, input: RouteInput): Promise<ApiResult<Ro
+   return request<Route>(`/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
+ }
+ 
++/** 使わなくなったルートを片付ける。選択肢から消え、一覧では「片付けたルート」に移る */
++export function archiveRoute(id: string): Promise<ApiResult<Route>> {
++  return request<Route>(`/${encodeURIComponent(id)}/archive`, { method: "POST" });
++}
++
++/** 片付けたルートを元に戻す */
++export function unarchiveRoute(id: string): Promise<ApiResult<Route>> {
++  return request<Route>(`/${encodeURIComponent(id)}/unarchive`, { method: "POST" });
++}
++
+ export function deleteRoute(id: string): Promise<ApiResult<undefined>> {
+   return request<undefined>(`/${encodeURIComponent(id)}`, { method: "DELETE" });
+ }
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index 25d948c..4594873 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -1151,3 +1151,17 @@ button.danger:hover:not(:disabled) {
+     transition: none !important;
+   }
+ }
++
++/* 片付けたルート */
++.archived-routes {
++  margin-top: 1.5rem;
++}
++
++.archived-routes summary {
++  cursor: pointer;
++  font-weight: 600;
++}
++
++.ticket.is-archived {
++  opacity: 0.7;
++}
+diff --git a/shared/src/route.ts b/shared/src/route.ts
+index e065ea3..e85f224 100644
+--- a/shared/src/route.ts
++++ b/shared/src/route.ts
+@@ -22,6 +22,11 @@ export type Route = {
+    * 金額の計算には使わないので、RouteSnapshot には入れない（ADR-0002）
+    */
+   searchUrl?: string;
++  /**
++   * 使わなくなったルートなら true（片付け済み）。片付けたルートは、出勤などの選択肢に出さない。
++   * 削除と違って元に戻せる。通常のルートでは項目ごと無い
++   */
++  archived?: true;
+ };
+ 
+ /**
+@@ -31,4 +36,4 @@ export type Route = {
+ export type RouteSnapshot = Pick<Route, "name" | "from" | "to" | "transport" | "oneWayFare">;
+ 
+ /** ルートを登録・編集するときに送る値（id と userId はサーバーが決める） */
+-export type RouteInput = Omit<Route, "id" | "userId">;
++export type RouteInput = Omit<Route, "id" | "userId" | "archived">;

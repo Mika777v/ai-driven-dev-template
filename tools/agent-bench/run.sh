@@ -19,6 +19,7 @@
 #                       minimal   CLAUDE.md を、説明・技術スタック・コマンドだけにする
 #                       bare      minimal に加えて、運用のルールの文書（DEV_RULES・GITHUB_WORKFLOW・PROGRESS・
 #                                 PR / Issue のテンプレート・pr-title.yml）も消す。「ルールが無い」状態
+#                       none      bare に加えて docs/adr/README.md（ADR を書くときのルール）も消す
 #   BENCH_RUNS        1つの条件で何回動かすか（既定: 2）
 #   BENCH_MODEL       使うモデル（比べるときは固定する）
 #   BENCH_MAX_BUDGET  1回あたりの上限（ドル。既定: 5）
@@ -91,6 +92,12 @@ treat() {
       cp "$HERE/fixtures/routepense-minimal-CLAUDE.md" "$ws/CLAUDE.md"
       rm -rf "$ws/docs/DEV_RULES.md" "$ws/docs/GITHUB_WORKFLOW.md" "$ws/docs/PROGRESS.md" \
         "$ws/.github/pull_request_template.md" "$ws/.github/ISSUE_TEMPLATE" "$ws/.github/workflows/pr-title.yml"
+      ;;
+    none)
+      # bare に加えて、ADR の書き方（いつ書くか・自動マージしないこと）を書いた docs/adr/README.md も消す。
+      # ADR そのもの（0001〜）はプロジェクトの中身として残す
+      treat bare "$ws"
+      rm -f "$ws/docs/adr/README.md"
       ;;
     *) die "知らない条件: $cond" ;;
   esac

@@ -17,6 +17,7 @@
 - 12回（Sonnet・Haiku × template・bare × 3回）の読み比べは [results/2026-11-06-T4/README.md](results/2026-11-06-T4/README.md)
 - 要点: スキーマと要件定義を変えた回で「確認が必要な項目」に申告したのは、ルールあり 5/5・ルールなし 0/6。「ルールのある Sonnet が作らずに聞く」は 1/3 だけ。ルールなしの Haiku も 2/3 で ADR を書いた（`docs/adr/README.md` に書くときのルールがあり、ルールなしの条件でも消していないため）
 - テンプレートの README「ルールの効果」に節を足す PR を出した（下の「開いている PR」）
+- 追加: `docs/adr/README.md` も消した条件 `none`（Sonnet・Haiku × 3回）。ADR は 0/6、オーナーの確認に触れた PR も 0/6。bare の Haiku が ADR を書いたのは ADR の README のためと確かめた
 - 採点の直しどころ: `diff_hides_in_selection` は「カレンダーの画面を変えたか」だけで見ているので、API の既定で除く作りを見落とす。Sonnet・template の `typecheck_ok=0` は原因が未確認
 
 ## T2（続きの Task）— 終わった
@@ -28,7 +29,8 @@
 ## まだやっていないこと
 
 - T2 の発展: 続きの AI もルールありの条件（from-template をルールありで続ける）と比べる
-- T4 を Opus でも動かす。T4 で `docs/adr/README.md` も消した「本当にルールの無い」条件と比べる
+- T4 を Opus でも動かす
+- 担当ごとにモデルを変える運用（実装 Sonnet・探索 Haiku・レビュー Opus）を、Sonnet だけの条件と T4・T3 で比べる（`.claude/agents/` に役の定義を置いた条件を足す）。オーナーが採用を考えている
 - 「足した ADR のルールで、AI が実際に ADR を書くか」の確認（T3 を新しい土台 `d4d15fd` で動かす）。T4 では Haiku・template が書いた
 
 ## 道具の場所
