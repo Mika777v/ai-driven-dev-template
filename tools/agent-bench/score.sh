@@ -9,6 +9,8 @@
 
 set -o pipefail
 WS="$1"; TASK="$2"
+# 作業場所に移った後も見つけられるよう、Task の場所は絶対パスにする
+case "$TASK" in /*) ;; *) TASK="$(cd "$TASK" 2>/dev/null && pwd)" ;; esac
 [ -d "$WS/.git" ] && [ -f "$TASK/config.sh" ] || { echo "使い方: score.sh <作業場所> <Task のディレクトリ>" >&2; exit 2; }
 # shellcheck disable=SC1091
 . "$TASK/config.sh"
@@ -50,6 +52,17 @@ for kv in $DOC_CHECKS; do
   name="${kv%%=*}"; prefix="${kv#*=}"
   out "touched_$name" "$(printf '%s\n' "$changed" | grep -q "^$prefix" && echo 1 || echo 0)"
 done
+
+# Task ごとの、差分の中身で見ること（DIFF_CHECKS: 「名前=正規表現」を1行に1つ）
+if [ -n "$DIFF_CHECKS" ]; then
+  alldiff=$(git diff "$root" HEAD)
+  while IFS= read -r kv; do
+    [ -n "$kv" ] || continue
+    out "diff_${kv%%=*}" "$(printf '%s\n' "$alldiff" | grep -Eq "${kv#*=}" && echo 1 || echo 0)"
+  done <<EOF
+$DIFF_CHECKS
+EOF
+fi
 
 # 既にあるマイグレーションの SQL を書き換えていないか（SQL の行を削っていたら書き換えとみなす）。
 # 型の宣言や閉じかっこの付け替えは数えない（SQL の言葉を含む行だけを見る）
@@ -99,7 +112,9 @@ for kv in $ACCEPTANCE; do
   mkdir -p "$(dirname "$dest")"
   cp "$TASK/acceptance/$src" "$dest" && placed[${#placed[@]}]="$dest"
 done
-res=$(npx vitest run "${placed[@]}" 2>&1 | grep -E '^ +Tests ' | tail -n 1)
+# 1つも置けなかったときに、全部のテストを流して数えないようにする
+res=""
+[ ${#placed[@]} -gt 0 ] && res=$(npx vitest run "${placed[@]}" 2>&1 | grep -E '^ +Tests ' | tail -n 1)
 rm -f "${placed[@]}"
 # 全部の数は受け入れテストのファイルの it( から数える（読み込みで落ちて 0 件になったときも、分母がぶれないように）
 total=$(cat "$TASK"/acceptance/*.ts | grep -cE '^\s*it\(')
