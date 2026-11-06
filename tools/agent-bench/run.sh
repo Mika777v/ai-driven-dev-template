@@ -22,6 +22,8 @@
 #                       none      bare に加えて docs/adr/README.md（ADR を書くときのルール）も消す
 #   BENCH_RUNS        1つの条件で何回動かすか（既定: 2）
 #   BENCH_MODEL       使うモデル（比べるときは固定する）
+#   BENCH_SPEC_MODEL  決めると、実装の前に、このモデルが要件を詰める段階を入れる（コードは変えず SPEC.md を書く）。
+#                     実装する AI には、Task と詰めた要件（オーナーが確かめた扱い）を渡す
 #   BENCH_MAX_BUDGET  1回あたりの上限（ドル。既定: 5）
 #   BENCH_TIMEOUT     1回あたりの上限（秒。既定: 1800。timeout コマンドがあるときだけ）
 #
@@ -57,6 +59,24 @@ prompt() {
 次の Task を実装して、PR を出す直前まで進めてください。
 GitHub には接続できないので、push と PR の作成はできません。代わりに、PR のタイトルを PR_TITLE.txt、本文を PR_BODY.md に書いてください（この2つはコミットしない）。変更はコミットまでしてください。
 質問はできないので、決めることがあれば自分で決めて、PR の本文に書いてください。
+
+EOF
+  cat "$TASK/task.md"
+  if [ -n "$SPEC_FILE" ] && [ -s "$SPEC_FILE" ]; then
+    printf '\n\n---\n\n# 要件を詰めた結果（オーナーが確かめ、この内容で進めてよいと言った）\n\n'
+    cat "$SPEC_FILE"
+  fi
+}
+
+# 要件を詰める段階への指示（ベンチではオーナーに聞けないので、おすすめの答えを採用した扱いにする）
+spec_prompt() {
+  cat <<'EOF'
+あなたは、実装の前に要件を詰める役です。コードや文書は変えないでください（git のコミットもしない）。
+次の Task を読み、リポジトリ（要件定義・ADR・コード）を調べて、実装する人に渡す要件を SPEC.md に書いてください。
+
+- 依頼のあいまいなところ、オーナーに確かめるべきことを洗い出す。それぞれに、選択肢・おすすめ・理由を書く
+- オーナーにはこの後で確かめるので、おすすめの答えを採用したものとして、要件（やること・やらないこと・受け入れ条件）を書く
+- 戻しにくい変更（DB のスキーマ・要件定義の変更など）が要るなら、そう書く
 
 EOF
   cat "$TASK/task.md"
@@ -194,11 +214,25 @@ cmd_run() {
   for rep in $(seq 1 "$RUNS"); do
     for cond in $CONDITIONS; do
       # モデルを決めたときは、結果の名前にモデルを入れる（ほかのモデルの結果を上書きしないように）
-      tag="$TASK_NAME-$cond-${BENCH_MODEL:+${BENCH_MODEL#claude-}-}$rep"
+      tag="$TASK_NAME-$cond-${BENCH_SPEC_MODEL:+spec-${BENCH_SPEC_MODEL#claude-}-}${BENCH_MODEL:+${BENCH_MODEL#claude-}-}$rep"
       [ -s "$OUT/runs/$tag.score" ] && { info "== $tag（済み。やり直すなら $OUT/runs/$tag.* を消す）"; continue; }
       ws="$OUT/ws-$tag"
       make_workspace "$cond" "$ws"
       info "== $tag"
+      SPEC_FILE=""
+      if [ -n "$BENCH_SPEC_MODEL" ]; then
+        info "   要件を詰める（$BENCH_SPEC_MODEL）"
+        (cd "$ws" && "${to[@]}" claude -p "$(spec_prompt)" --output-format stream-json --verbose \
+          --allowedTools "Bash" "Read" "Grep" "Glob" "Write" \
+          --disallowedTools "Edit" "NotebookEdit" "Task" "Agent" "WebFetch" "WebSearch" \
+          --setting-sources project,local --strict-mcp-config --no-session-persistence \
+          --max-budget-usd "$MAX_BUDGET" --model "$BENCH_SPEC_MODEL" \
+          < /dev/null > "$OUT/runs/$tag.spec.jsonl" 2> "$OUT/runs/$tag.spec.err")
+        cp "$ws/SPEC.md" "$OUT/runs/$tag.spec.md" 2>/dev/null || info "   SPEC.md が書かれなかった"
+        # 要件の段階が触った物は戻す（実装の段階は、同じ土台から始める）
+        (cd "$ws" && git status --porcelain > "$OUT/runs/$tag.spec.touched" && git reset -q --hard bench-start && git clean -qfd)
+        SPEC_FILE="$OUT/runs/$tag.spec.md"
+      fi
       start=$(date +%s)
       # 書き換えは許す。サブエージェント（数えられなくなる）と Web は使わせない。ユーザーの設定と MCP は読まない
       # 標準入力は /dev/null にする（claude が標準入力を読んで止まらないように）

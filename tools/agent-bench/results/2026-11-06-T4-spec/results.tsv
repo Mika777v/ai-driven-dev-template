@@ -1,0 +1,4 @@
+run	tools	turns	tokens	cost_usd	sec	accept_passed	accept_total	suite_ok	typecheck_ok	lint_ok	branch_ok	branch_named	commits_conventional	uncommitted	pr_title_ok	pr_sections_ok	pr_confirm_declared	pr_links_issue	touched_textbook	touched_openapi	touched_frontend	touched_troubleshooting	touched_progress	migration_rewritten	out_of_scope	files_changed
+T4-tidy-routes-template-spec-opus-5-5-sonnet-5-5-1	17	18	1367852	0.7475166	171	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	29
+T4-tidy-routes-template-spec-opus-5-5-sonnet-5-5-2	20	21	1507068	0.6538263999999999	179	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	30
+T4-tidy-routes-template-spec-opus-5-5-sonnet-5-5-3	27	28	2535322	0.9344323	270	3	3	1	1	1	1	1	1	0	1	1	1	0		1	1	1	1	0	0	30
